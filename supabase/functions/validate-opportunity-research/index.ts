@@ -324,12 +324,34 @@ async function synthesizeResearch(
     ? `COMPETITOR APPS FOUND:\n${data.competitorApps.slice(0, 6).map(a => `- ${a.name} (${a.rating}★, ${a.ratingCount} ratings): ${a.description.slice(0, 150)}`).join('\n')}`
     : 'No direct competitor apps found on App Store.';
 
-  const allCitations = [
+  // Clean, deduplicate and filter citations
+  function cleanCitation(c: { title: string; url: string }): { title: string; url: string } {
+    // Remove UTM tracking params added by OpenAI web search
+    let url = c.url;
+    try {
+      const u = new URL(url);
+      u.searchParams.delete('utm_source');
+      u.searchParams.delete('utm_medium');
+      u.searchParams.delete('utm_campaign');
+      url = u.toString();
+    } catch { /* keep original */ }
+    return { title: c.title, url };
+  }
+
+  const rawCitations = [
     ...data.communityEvidence.citations,
     ...data.competitorEvidence.citations,
     ...data.twitterEvidence.citations,
     ...data.analogousMarkets.citations,
-  ].slice(0, 15);
+  ].map(cleanCitation);
+
+  // Deduplicate by URL and filter out clearly irrelevant generic sites
+  const seenUrls = new Set<string>();
+  const allCitations = rawCitations.filter(c => {
+    if (!c.url || seenUrls.has(c.url)) return false;
+    seenUrls.add(c.url);
+    return true;
+  }).slice(0, 15);
 
   const citationContext = allCitations.map((c, i) => `[${i + 1}] ${c.title} — ${c.url}`).join('\n');
 
@@ -389,12 +411,22 @@ Provide a comprehensive startup research report. JSON format:
   "dataQuality": "${dataQuality}"
 }
 
-opportunityScore: 0-100. 
-- 70-100: Strong evidence of unmet demand
-- 50-69: Moderate signals, worth exploring  
-- 30-49: Weak signals, needs more validation
-- 0-29: Insufficient evidence or clear negative signals
-If data is sparse but analogous markets show strong evidence: score 40-60 and explain.`;
+opportunityScore: CRITICAL — Score each opportunity based on actual evidence strength. Do NOT default to 65.
+
+SCORING (calculate step by step before deciding):
+Step 1 — Reddit evidence: 0 relevant posts = start at 30. 1-5 posts = 40. 6-15 posts = 55. 16+ posts = 65.
+Step 2 — Web search quality: citations directly about this problem = +10. Citations about unrelated topics = -10.
+Step 3 — Competitor apps: 0 apps = +15 (market gap!). 1-3 apps with gaps = +5. 4+ apps with poor reviews = +10.
+Step 4 — Analogous market strength: strong analogous evidence (similar community solved it) = +15. Weak = +0.
+Step 5 — Problem urgency: Is this a daily/weekly pain? = +10. Nice-to-have? = +0.
+
+EXAMPLES to calibrate:
+- Postpartum nutrition app: Reddit r/beyondthebump has 50+ posts about meal struggles. Multiple apps but none tailored. Score: 72.
+- Ethiopian diaspora networking: No Reddit posts, but analogous markets (Nigerian diaspora apps exist, thriving). 6 competitor apps found. Score: 52.  
+- Generic SaaS dashboard: Crowded market, 20+ competitors, no clear differentiation evidence. Score: 35.
+- Completely novel idea with no data anywhere: Score: 28.
+
+Each opportunity MUST receive a score reflecting ITS specific evidence. Scores MUST vary significantly across different opportunities.`;
 
   function redditPosts_context(posts: any[]): string {
     if (posts.length === 0) return 'REDDIT: No relevant posts found.';
@@ -629,7 +661,14 @@ serve(async (req: Request) => {
       risks: report.risks,
       competitorApps: competitorApps.slice(0, 6),
       analogousMarkets: plan.analogousMarkets,
-      webCitations: [...communityEvidence.citations, ...competitorEvidence.citations, ...analogousMarketsEvidence.citations].slice(0, 12),
+      webCitations: [...communityEvidence.citations, ...competitorEvidence.citations, ...analogousMarketsEvidence.citations]
+        .map(c => {
+          let url = c.url || '';
+          try { const u = new URL(url); u.searchParams.delete('utm_source'); u.searchParams.delete('utm_medium'); u.searchParams.delete('utm_campaign'); url = u.toString(); } catch {}
+          return { title: c.title, url };
+        })
+        .filter((c, i, arr) => c.url && arr.findIndex(x => x.url === c.url) === i) // dedup
+        .slice(0, 12),
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (error: any) {

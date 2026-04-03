@@ -301,7 +301,11 @@ export function SimplifiedValidationSignals({
           risks: rd.risks || [],
           competitorApps: rd.competitorApps || [],
           analogousMarkets: rd.analogousMarkets || [],
-          webCitations: rd.webCitations || [],
+          webCitations: (rd.webCitations || []).map((c: any) => {
+          let url = c.url || '';
+          try { const u = new URL(url); u.searchParams.delete('utm_source'); u.searchParams.delete('utm_medium'); url = u.toString(); } catch {}
+          return { ...c, url };
+        }),
           dataQuality: rd.dataQuality,
           totalDataPoints: rd.totalDataPoints,
           evidenceSources: ['Reddit', 'Web Search', 'App Store', 'AI Research'],
