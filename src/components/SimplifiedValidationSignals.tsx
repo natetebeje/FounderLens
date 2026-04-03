@@ -531,112 +531,86 @@ export function SimplifiedValidationSignals({
   return (
     <div className="space-y-6">
 
-      {/* ── Hero: Title + Score + Action ── */}
-      <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary/5 via-primary/10 to-background border border-primary/20 p-6 md:p-8">
-        <div className="relative space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-2 flex-1">
-              <Badge variant={isCompleted ? 'default' : 'secondary'} className="text-sm font-medium">
-                {isCompleted ? 'Validation Complete' : 'Market Validation'}
-              </Badge>
-              <h2 className="text-xl md:text-2xl font-bold">{opportunity?.title}</h2>
-              {isCompleted && (
-                <p className="text-sm text-muted-foreground">
-                  AI analysis + community research results below.
-                </p>
-              )}
+      {/* ── Header card: title + score + action ── */}
+      <Card className="border-border">
+        <CardContent className="p-5 md:p-6">
+
+          {/* Top row: title left, score right */}
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg md:text-xl font-bold leading-snug truncate">{opportunity?.title}</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {isRunning
+                  ? currentStep
+                  : isCompleted
+                    ? 'Validation complete — review findings below'
+                    : 'Run validation to analyse market demand from Reddit and AI'}
+              </p>
             </div>
+
+            {/* Score pill — only when we have a score */}
             {(hasResults || (isCompleted && effectiveOverallScore > 0)) && (
-              <div className="text-right flex-shrink-0">
-                <div className={`text-3xl font-bold ${getScoreColor(effectiveOverallScore)}`}>
+              <div className={`flex-shrink-0 flex flex-col items-center justify-center rounded-xl px-4 py-2 min-w-[72px] border ${getScoreBg(effectiveOverallScore)}`}>
+                <span className={`text-2xl font-bold leading-none ${getScoreColor(effectiveOverallScore)}`}>
                   {effectiveOverallScore}%
-                </div>
-                <div className="text-xs text-muted-foreground">{getVerdict(effectiveOverallScore)}</div>
+                </span>
+                <span className="text-xs text-muted-foreground mt-1 text-center leading-tight">
+                  {getVerdict(effectiveOverallScore)}
+                </span>
               </div>
             )}
           </div>
 
-          {/* Step indicators */}
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { icon: Zap, text: 'AI analysis', done: !!validationStatus?.hasAiValidation || hasAiData },
-              { icon: Users, text: 'Community research', done: !!validationStatus?.hasRedditValidation || hasCommunityData },
-              { icon: TrendingUp, text: 'Scoring', done: isCompleted && hasResults },
-            ].map((f, i) => (
-              <div key={i} className={`flex items-center gap-2 p-2.5 rounded-lg border ${
-                f.done ? 'bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-800' : 'bg-background/50 border-border/50'
-              }`}>
-                {f.done ? <CheckCircle className="h-4 w-4 text-green-500 shrink-0" /> : <f.icon className="h-4 w-4 text-muted-foreground shrink-0" />}
-                <span className={`text-xs md:text-sm font-medium ${f.done ? 'text-green-700 dark:text-green-400' : 'text-muted-foreground'}`}>{f.text}</span>
-              </div>
-            ))}
-          </div>
+          {/* Progress bar (only while running) */}
+          {isRunning && (
+            <div className="mb-4">
+              <Progress value={progress} className="h-1.5 w-full" />
+            </div>
+          )}
 
-          {/* Action button */}
-          <div className="flex items-center gap-3">
+          {/* Score breakdown row — compact, only when complete */}
+          {(hasResults || (isCompleted && effectiveOverallScore > 0)) && (
+            <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-muted/40 border border-border/50">
+              <div className="flex-1 text-center">
+                <div className={`text-base font-semibold ${getScoreColor(effectiveOverallScore)}`}>{effectiveOverallScore}%</div>
+                <div className="text-xs text-muted-foreground">Overall</div>
+              </div>
+              <div className="w-px h-8 bg-border" />
+              <div className="flex-1 text-center">
+                <div className={`text-base font-semibold ${getScoreColor(effectiveAiScore)}`}>{effectiveAiScore}%</div>
+                <div className="text-xs text-muted-foreground">AI Analysis</div>
+              </div>
+              <div className="w-px h-8 bg-border" />
+              <div className="flex-1 text-center">
+                <div className={`text-base font-semibold ${getScoreColor(effectiveCommunityScore)}`}>{effectiveCommunityScore}%</div>
+                <div className="text-xs text-muted-foreground">Community</div>
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex items-center gap-2">
             {isCompleted ? (
-              <Button onClick={runAllSignals} disabled={isRunning} size="sm" variant="ghost" className="text-muted-foreground">
+              <Button onClick={runAllSignals} disabled={isRunning} size="sm" variant="outline">
                 {isRunning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-2" />}
-                {isRunning ? 'Running...' : 'Re-run Validation'}
+                {isRunning ? 'Running...' : 'Re-run'}
               </Button>
             ) : (
-              <Button onClick={runAllSignals} disabled={isRunning} size="lg">
+              <Button onClick={runAllSignals} disabled={isRunning}>
                 {isRunning ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
-                {isRunning ? 'Running Analysis...' : 'Run Validation'}
+                {isRunning ? 'Analysing...' : 'Run Validation'}
               </Button>
             )}
             {isCompleted && (
-              <Button onClick={copyReport} variant="outline" size="sm">
-                <Copy className="h-4 w-4 mr-2" />
+              <Button onClick={copyReport} variant="ghost" size="sm" className="text-muted-foreground">
+                <Copy className="h-4 w-4 mr-1.5" />
                 Copy Report
               </Button>
             )}
           </div>
-        </div>
-      </div>
 
-      {/* ── Progress bar ── */}
-      {isRunning && (
-        <Card className="border-primary/30 bg-primary/5">
-          <CardContent className="p-5">
-            <div className="space-y-3">
-              <div className="flex items-center gap-3">
-                <Search className="h-5 w-5 text-primary animate-pulse" />
-                <span className="text-sm font-medium">{currentStep}</span>
-              </div>
-              <Progress value={progress} className="w-full" />
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Score Breakdown (only once) ── */}
-      {(hasResults || (isCompleted && effectiveOverallScore > 0)) && (
-        <div className="grid grid-cols-3 gap-3">
-          <Card className={`border ${getScoreBg(effectiveOverallScore)}`}>
-            <CardContent className="p-4 text-center">
-              <div className={`text-2xl md:text-3xl font-bold ${getScoreColor(effectiveOverallScore)}`}>{effectiveOverallScore}%</div>
-              <div className="text-xs text-muted-foreground mt-1">Overall</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <div className={`text-2xl md:text-3xl font-bold ${getScoreColor(effectiveAiScore)}`}>
-                {effectiveAiScore}%
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">AI Analysis</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4 text-center">
-              <div className={`text-2xl md:text-3xl font-bold ${getScoreColor(effectiveCommunityScore)}`}>
-                {effectiveCommunityScore}%
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">Community</div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+        </CardContent>
+      </Card>
 
       {/* ── AI Recommendation ── */}
       {recommendation && (
