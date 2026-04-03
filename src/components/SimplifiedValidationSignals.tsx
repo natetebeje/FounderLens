@@ -601,14 +601,14 @@ export function SimplifiedValidationSignals({
               <div className={`flex-shrink-0 flex flex-col items-center justify-center rounded-xl px-4 py-2.5 min-w-[80px] border ${
                 (researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? 0) >= 70
                   ? 'bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-800'
-                  : (discussionSummary.opportunityScore ?? 0) >= 40
+                  : (researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? 0) >= 40
                     ? 'bg-yellow-50 border-yellow-200 dark:bg-yellow-950/20 dark:border-yellow-800'
                     : 'bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800'
               }`}>
                 <span className={`text-2xl font-bold leading-none ${
-                  (discussionSummary.opportunityScore ?? 0) >= 70
+                  (researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? 0) >= 70
                     ? 'text-green-600 dark:text-green-400'
-                    : (discussionSummary.opportunityScore ?? 0) >= 40
+                    : (researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? 0) >= 40
                       ? 'text-yellow-600 dark:text-yellow-400'
                       : 'text-red-500 dark:text-red-400'
                 }`}>
@@ -618,9 +618,9 @@ export function SimplifiedValidationSignals({
                   Opportunity Score
                 </span>
                 <span className={`text-xs font-semibold mt-0.5 ${
-                  (discussionSummary.opportunityScore ?? 0) >= 70
+                  (researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? 0) >= 70
                     ? 'text-green-600 dark:text-green-400'
-                    : (discussionSummary.opportunityScore ?? 0) >= 40
+                    : (researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? 0) >= 40
                       ? 'text-yellow-600 dark:text-yellow-400'
                       : 'text-red-500 dark:text-red-400'
                 }`}>
