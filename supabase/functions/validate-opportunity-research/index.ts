@@ -10,995 +10,443 @@ const corsHeaders = {
 // TYPES
 // ============================================================================
 
-interface HNResult {
-  title: string;
-  url: string | null;
-  author: string;
-  points: number;
-  numComments: number;
-  createdAt: string;
-  objectID: string;
-  storyText: string | null;
+interface WebSearchResult {
+  query: string;
+  summary: string;
+  citations: { title: string; url: string; snippet?: string }[];
 }
 
-interface HNComment {
-  text: string;
-  author: string;
-  points: number;
-  createdAt: string;
-  objectID: string;
-  storyTitle: string;
-}
-
-interface RedditPost {
-  title: string;
-  selftext: string;
-  author: string;
-  subreddit: string;
-  score: number;
-  numComments: number;
-  permalink: string;
-  createdUtc: number;
-  upvoteRatio: number;
-  topComments: { body: string; author: string; score: number }[];
-}
-
-interface SearchPlan {
-  queries: string[];
-  hnQueries: string[];
-  subreddits: string[];
-  keywords: string[];
-  webQueries: string[];
-  localLanguageQueries: string[];
-}
-
-interface WebForumResult {
-  title: string;
-  snippet: string;
+interface AppStoreApp {
+  name: string;
+  rating: number;
+  ratingCount: number;
+  description: string;
+  platform: 'ios' | 'android' | 'web';
   url: string;
-  source: string;
+  price?: string;
+}
+
+interface ResearchReport {
+  // Evidence from web
+  communityEvidence: WebSearchResult;
+  competitorApps: AppStoreApp[];
+  competitorEvidence: WebSearchResult;
+  twitterEvidence: WebSearchResult;
+  analogousMarkets: WebSearchResult;
+  // Analysis
+  demandSignals: string[];
+  painPoints: string[];
+  competitors: { name: string; description: string; gap: string }[];
+  marketGaps: string[];
+  risks: string[];
+  // Scores
+  dataQuality: 'rich' | 'moderate' | 'sparse';
+  evidenceSources: string[];
+  totalDataPoints: number;
+  // Verdict
+  opportunityScore: number;
+  verdict: 'strong' | 'moderate' | 'weak' | 'insufficient_data';
+  verdictReason: string;
+  recommendation: string;
+  // Report
+  briefSummary: string;
+  fullReport: string;
+  researchedAt: string;
 }
 
 // ============================================================================
-// STEP 1: AI-POWERED SEARCH PLANNING (GigaBrain-inspired)
-// Instead of naive keyword extraction, use AI to generate targeted queries
+// STEP 1: WEB SEARCH VIA OPENAI RESPONSES API
+// Uses GPT-4o with live web search — finds real citations from across the internet
+// ============================================================================
+
+async function webSearch(
+  query: string,
+  apiKey: string
+): Promise<WebSearchResult> {
+  try {
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        tools: [{ type: 'web_search_preview' }],
+        input: query,
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn(`Web search failed: ${response.status}`);
+      return { query, summary: '', citations: [] };
+    }
+
+    const data = await response.json();
+    const outputs = data.output || [];
+    let text = '';
+    const queriesRun: string[] = [];
+    const citations: { title: string; url: string; snippet?: string }[] = [];
+
+    for (const out of outputs) {
+      if (out.type === 'message') {
+        for (const c of out.content || []) {
+          if (c.type === 'output_text') {
+            text = c.text || '';
+            for (const ann of c.annotations || []) {
+              if (ann.type === 'url_citation') {
+                citations.push({ title: ann.title || '', url: ann.url || '' });
+              }
+            }
+          }
+        }
+      }
+      if (out.type === 'web_search_call') {
+        queriesRun.push(out.action?.query || '');
+      }
+    }
+
+    console.log(`🔍 Search: "${queriesRun[0] || query}" → ${citations.length} citations`);
+    return { query: queriesRun[0] || query, summary: text, citations };
+  } catch (err) {
+    console.error('Web search error:', err);
+    return { query, summary: '', citations: [] };
+  }
+}
+
+// ============================================================================
+// STEP 2: APP STORE COMPETITOR RESEARCH (iTunes API - free, no key needed)
+// ============================================================================
+
+async function searchAppStore(
+  opportunity: { title: string; targetMarket: string; description: string }
+): Promise<AppStoreApp[]> {
+  const apps: AppStoreApp[] = [];
+  const seen = new Set<string>();
+
+  // Build search terms from opportunity
+  const words = opportunity.title.toLowerCase().split(' ').filter(w => w.length > 3);
+  const searchTerms = [
+    opportunity.title,
+    words.slice(0, 3).join(' '),
+    // Extract key domain terms
+    opportunity.targetMarket.split(' ').slice(0, 3).join(' '),
+  ];
+
+  for (const term of searchTerms.slice(0, 2)) {
+    try {
+      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=software&limit=10&country=us`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'FounderLens/1.0' } });
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      for (const app of data.results || []) {
+        if (seen.has(app.trackId)) continue;
+        seen.add(app.trackId);
+        apps.push({
+          name: app.trackName,
+          rating: app.averageUserRating || 0,
+          ratingCount: app.userRatingCount || 0,
+          description: (app.description || '').substring(0, 300),
+          platform: 'ios',
+          url: app.trackViewUrl || '',
+          price: app.formattedPrice || 'Free',
+        });
+      }
+      await new Promise(r => setTimeout(r, 500));
+    } catch (e) {
+      console.error('App Store search error:', e);
+    }
+  }
+
+  return apps.sort((a, b) => b.ratingCount - a.ratingCount).slice(0, 8);
+}
+
+// ============================================================================
+// STEP 3: REDDIT SEARCH (PullPush - two-pass strategy)
+// ============================================================================
+
+async function searchReddit(
+  queries: string[],
+  subreddits: string[],
+  limit = 25
+): Promise<{ title: string; subreddit: string; score: number; selftext: string; permalink: string; topComments: string[] }[]> {
+  const all: any[] = [];
+  const targetSubSet = new Set(subreddits.map(s => s.toLowerCase()));
+
+  // Pass 1: global topic search
+  for (const query of queries.slice(0, 5)) {
+    try {
+      const url = new URL('https://api.pullpush.io/reddit/search/submission/');
+      url.searchParams.set('q', query);
+      url.searchParams.set('size', '20');
+      url.searchParams.set('score', '>0');
+      const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const p of data?.data ?? []) {
+        if (!p.title) continue;
+        all.push({ title: p.title, subreddit: p.subreddit || 'unknown', score: p.score || 0, selftext: (p.selftext || '').substring(0, 500), permalink: p.permalink ? `https://reddit.com${p.permalink}` : '', topComments: [] });
+      }
+      await new Promise(r => setTimeout(r, 300));
+    } catch { /* ignore */ }
+  }
+
+  // Pass 2: subreddit-scoped
+  for (const sub of subreddits.slice(0, 4)) {
+    try {
+      const url = new URL('https://api.pullpush.io/reddit/search/submission/');
+      url.searchParams.set('q', queries[0] || '');
+      url.searchParams.set('subreddit', sub);
+      url.searchParams.set('size', '10');
+      url.searchParams.set('score', '>0');
+      const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const p of data?.data ?? []) {
+        if (!p.title) continue;
+        all.push({ title: p.title, subreddit: p.subreddit || sub, score: p.score || 0, selftext: (p.selftext || '').substring(0, 500), permalink: p.permalink ? `https://reddit.com${p.permalink}` : '', topComments: [] });
+      }
+      await new Promise(r => setTimeout(r, 300));
+    } catch { /* ignore */ }
+  }
+
+  // Dedup + rank target subs first
+  const seen = new Map<string, any>();
+  for (const p of all) { const key = p.permalink || p.title; if (!seen.has(key)) seen.set(key, p); }
+  const unique = [...seen.values()];
+  unique.sort((a, b) => {
+    const aIn = targetSubSet.has(a.subreddit.toLowerCase()) ? 1 : 0;
+    const bIn = targetSubSet.has(b.subreddit.toLowerCase()) ? 1 : 0;
+    if (aIn !== bIn) return bIn - aIn;
+    return b.score - a.score;
+  });
+  return unique.slice(0, limit);
+}
+
+// ============================================================================
+// STEP 4: AI SEARCH PLANNING
 // ============================================================================
 
 async function generateSearchPlan(
   opportunity: { title: string; description: string; targetMarket: string; problemStatement: string; tags?: string[] },
   apiKey: string
-): Promise<SearchPlan> {
-  const prompt = `You are a research query strategist. Given a business opportunity, generate highly specific search queries to find REAL community discussions about the EXACT problem this opportunity solves.
+): Promise<{ queries: string[]; subreddits: string[]; keywords: string[]; analogousMarkets: string[]; webSearchQueries: string[] }> {
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0.3,
+        max_tokens: 800,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: 'You are an expert startup researcher. Return valid JSON only.' },
+          { role: 'user', content: `Generate a research plan to validate this business opportunity. Think like a senior market researcher who has access to the entire internet.
 
-## OPPORTUNITY
-- **Title**: ${opportunity.title}
-- **Description**: ${opportunity.description}
-- **Target Market**: ${opportunity.targetMarket}
-- **Problem**: ${opportunity.problemStatement}
-- **Tags**: ${(opportunity.tags || []).join(', ')}
-
-## YOUR TASK
-Generate search queries that will find people discussing THIS SPECIFIC problem or need. Think like a researcher on GigaBrain/Reddit who wants to find threads where people are:
-1. Complaining about the exact problem this product solves
-2. Asking for a solution like this
-3. Discussing alternatives/competitors in this exact space
-4. Sharing frustrations with existing tools in this exact domain
-
-## RULES
-- Queries must be SPECIFIC and UNIQUE to this opportunity — not generic business/startup queries
-- Extract the CORE subject domain (e.g., for "AI Language Learning for Amharic" the core domain is "Amharic language learning", NOT "AI" or "startups")
-- Include the most distinctive keywords from the title and problem (proper nouns, niche terms, specific technologies)
-- Include queries about competing solutions in this EXACT space (name real competitors if you know them)
-- Include queries about the target audience's SPECIFIC pain points (not generic "frustrated with tools")
-- Subreddits must be where THIS topic's users actually hang out (not r/startups or r/entrepreneur unless the topic is literally about startup tools)
-- Each query should target a DIFFERENT angle: problem-focused, solution-focused, competitor-focused, audience-focused
+OPPORTUNITY: "${opportunity.title}"
+DESCRIPTION: ${opportunity.description}
+TARGET MARKET: ${opportunity.targetMarket}
+PROBLEM: ${opportunity.problemStatement}
 
 Return JSON:
 {
-  "queries": ["5-8 Reddit search queries - specific to this exact topic"],
-  "hnQueries": ["3-5 Hacker News search queries - more technical/startup angle"],
-  "subreddits": ["6-10 specific subreddits where this topic's target users hang out"],
-  "keywords": ["8-12 relevance keywords - a result MUST relate to at least one of these to be considered relevant"],
-  "webQueries": ["3-5 web search queries to find forum discussions, blog posts, Quora, Facebook groups, Stack Exchange, etc. - use 'site:' operators like 'site:quora.com' or 'site:facebook.com/groups' when useful"],
-  "localLanguageQueries": ["2-4 search queries in the TARGET MARKET's local language if the opportunity serves a non-English market, otherwise empty array. E.g., for Amharic learners include queries in Amharic script. For Spanish market, include Spanish queries."]
-}`;
-
-  try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: 'Return valid JSON only. No markdown, no explanation.' },
-          { role: 'user', content: prompt },
+  "queries": ["6 specific Reddit/community search queries using TARGET USERS language, not startup jargon"],
+  "subreddits": ["10 subreddits WHERE THE TARGET USERS actually hang out (not r/entrepreneur unless the product is for entrepreneurs)"],
+  "keywords": ["10 relevance keywords specific to this topic"],
+  "analogousMarkets": ["3-4 analogous communities or markets that have solved a similar problem — e.g. for Ethiopian diaspora networking, think Nigerian diaspora, Indian diaspora, Jewish professional networks"],
+  "webSearchQueries": [
+    "query to find community pain points on forums/blogs/Twitter",
+    "query to find existing competitor apps and platforms",
+    "query to find news articles about this market",
+    "query to find Quora/Reddit discussions about the problem"
+  ]
+}` },
         ],
-        temperature: 0.5,
-        max_tokens: 1000,
-        response_format: { type: 'json_object' },
       }),
     });
-
-    if (!response.ok) throw new Error(`OpenAI query planning failed: ${response.status}`);
-    const data = await response.json();
-    const plan = JSON.parse(data.choices[0].message.content);
-
-    // Merge AI subreddits with domain-map detected subreddits for best coverage
-    const domainSubs = getTopicSubreddits(
-      opportunity.title + ' ' + opportunity.targetMarket + ' ' + opportunity.problemStatement
-    );
-    const mergedSubs = [...new Set([...(plan.subreddits || []), ...domainSubs])].slice(0, 12);
-    console.log('🎯 Subreddits after merge:', mergedSubs.join(', '));
-
-    return {
-      queries: (plan.queries || []).slice(0, 8),
-      hnQueries: (plan.hnQueries || []).slice(0, 5),
-      subreddits: mergedSubs,
-      keywords: (plan.keywords || []).slice(0, 12),
-      webQueries: (plan.webQueries || []).slice(0, 5),
-      localLanguageQueries: (plan.localLanguageQueries || []).slice(0, 4),
-    };
-  } catch (error) {
-    console.error('Search plan generation failed, using fallback:', error);
-    return generateFallbackSearchPlan(opportunity);
-  }
-}
-
-function getTopicSubreddits(text: string): string[] {
-  const t = text.toLowerCase();
-  const domainMap: [RegExp, string[]][] = [
-    [/postpartum|maternal|pregnancy|birth|breastfeed|newborn|baby|infant|new mom|new mother/, ['BabyBumps', 'NewParents', 'breastfeeding', 'Mommit', 'Parenting', 'beyondthebump', 'postpartum', 'NewMoms']],
-    [/nutrition|meal plan|diet|food prep|recipe|calorie|eating habit/, ['nutrition', 'MealPrepSunday', 'EatCheapAndHealthy', 'loseit', 'HealthyFood', 'Cooking', 'DietAdvice']],
-    [/fitness|workout|gym|exercise|weight loss|running|lifting/, ['fitness', 'loseit', 'xxfitness', 'running', 'WeightLossAdvice', 'bodyweightfitness', 'gym']],
-    [/mental health|anxiety|depression|therapy|stress|burnout|wellbeing/, ['mentalhealth', 'anxiety', 'depression', 'therapy', 'selfimprovement', 'psychology']],
-    [/sleep|insomnia|tired|fatigue/, ['sleep', 'insomnia', 'LifeAdvice', 'selfimprovement']],
-    [/email|inbox|communication|reply|outreach/, ['productivity', 'lifehacks', 'GMail', 'Outlook', 'selfimprovement']],
-    [/productivity|workflow|time management|task|todo|planner/, ['productivity', 'getting_things_done', 'selfimprovement', 'LifeProTips', 'ADHD']],
-    [/ai|machine learning|llm|chatgpt|automation|generative/, ['MachineLearning', 'artificial', 'ChatGPT', 'LocalLLaMA', 'AIAssistants']],
-    [/saas|software|app|platform|developer tool/, ['SaaS', 'software', 'ProductManagement', 'webdev']],
-    [/coding|programming|developer|api|software engineer/, ['programming', 'webdev', 'learnprogramming', 'cscareerquestions', 'devops']],
-    [/ecommerce|shopify|amazon|dropship|online store/, ['ecommerce', 'shopify', 'FulfillmentByAmazon', 'dropship']],
-    [/finance|investment|money|budget|savings|debt|frugal/, ['personalfinance', 'investing', 'financialindependence', 'povertyfinance', 'Money']],
-    [/real estate|property|rental|housing|landlord/, ['realestateinvesting', 'RealEstate', 'landlord', 'FirstTimeHomeBuyer']],
-    [/education|learning|course|student|teacher|school/, ['learnprogramming', 'Teachers', 'StudentLoans', 'OnlineLearning', 'edtech']],
-    [/language|translation|multilingual|foreign language/, ['languagelearning', 'linguistics', 'translation', 'polyglot']],
-    [/pet|dog|cat|animal|veterinary/, ['dogs', 'cats', 'Pets', 'DogAdvice', 'CatAdvice', 'AskVet']],
-    [/travel|trip|vacation|tourism|backpacking/, ['travel', 'solotravel', 'digitalnomad', 'shoestring', 'TravelHacks']],
-    [/home|interior|decor|renovation|diy|repair/, ['homeimprovement', 'malelivingspace', 'DIY', 'HomeDecorating']],
-    [/startup|founder|entrepreneur|side project|bootstrapped/, ['Entrepreneur', 'startups', 'SideProject', 'EntrepreneurRideAlong', 'indiehackers']],
-    [/freelance|consultant|gig|contract work|solopreneur/, ['freelance', 'freelanceWriters', 'consulting', 'Entrepreneur', 'digitalnomad']],
-    [/hr|hiring|recruit|employee|talent/, ['humanresources', 'recruiting', 'jobs', 'careerguidance', 'cscareerquestions']],
-    [/marketing|seo|content|social media|growth/, ['marketing', 'SEO', 'content_marketing', 'digital_marketing', 'socialmedia']],
-  ];
-  const matched: string[] = [];
-  for (const [pattern, subs] of domainMap) {
-    if (pattern.test(t)) matched.push(...subs);
-  }
-  const unique = [...new Set(matched)];
-  return unique.length > 0 ? unique.slice(0, 10) : ['Entrepreneur', 'startups', 'smallbusiness'];
-}
-
-function generateFallbackSearchPlan(opportunity: {
-  title: string; description: string; targetMarket: string; problemStatement: string; tags?: string[]
-}): SearchPlan {
-  // Extract meaningful terms from the opportunity
-  const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those', 'how', 'what', 'which', 'who', 'whom', 'when', 'where', 'why', 'not', 'no', 'nor', 'than', 'too', 'very', 'just', 'about', 'above', 'after', 'again', 'all', 'also', 'any', 'because', 'before', 'between', 'both', 'each', 'few', 'more', 'most', 'other', 'over', 'same', 'some', 'such', 'then', 'there', 'through', 'under', 'until', 'your', 'their', 'into']);
-
-  const allText = `${opportunity.title} ${opportunity.description} ${opportunity.targetMarket} ${opportunity.problemStatement}`;
-  const keywords = allText.toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .split(/\s+/)
-    .filter(w => w.length > 3 && !stopWords.has(w));
-
-  const uniqueKeywords = [...new Set(keywords)].slice(0, 12);
-  const titleWords = opportunity.title.replace(/[^a-z0-9\s-]/gi, '').trim();
-
-  return {
-    queries: [
-      titleWords,
-      `${opportunity.problemStatement.split('.')[0]}`,
-      `${opportunity.targetMarket} problems`,
-      `${titleWords} alternative`,
-      `${titleWords} frustrating`,
-    ],
-    hnQueries: [
-      titleWords,
-      `${opportunity.targetMarket} solution`,
-      `${opportunity.problemStatement.split('.')[0]}`,
-    ],
-    subreddits: getTopicSubreddits(opportunity.title + ' ' + opportunity.targetMarket + ' ' + opportunity.problemStatement),
-    keywords: uniqueKeywords,
-    webQueries: [
-      `${titleWords} forum discussion`,
-      `${titleWords} site:quora.com`,
-    ],
-    localLanguageQueries: [],
-  };
-}
-
-// ============================================================================
-// STEP 2: SEARCH HACKER NEWS
-// ============================================================================
-
-async function searchHackerNews(queries: string[], limit: number = 30): Promise<{ stories: HNResult[]; comments: HNComment[] }> {
-  const allStories: HNResult[] = [];
-  const allComments: HNComment[] = [];
-
-  for (const query of queries.slice(0, 5)) {
-    try {
-      // Search stories
-      const storyUrl = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=${Math.ceil(limit / queries.length)}&numericFilters=points>1`;
-      const storyResponse = await fetch(storyUrl);
-      if (storyResponse.ok) {
-        const data = await storyResponse.json();
-        for (const hit of data.hits || []) {
-          allStories.push({
-            title: hit.title || '',
-            url: hit.url || null,
-            author: hit.author || '',
-            points: hit.points || 0,
-            numComments: hit.num_comments || 0,
-            createdAt: hit.created_at || '',
-            objectID: hit.objectID || '',
-            storyText: hit.story_text || null,
-          });
-        }
-      }
-
-      // Search comments (without appending generic frustration words)
-      const commentUrl = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment&hitsPerPage=${Math.ceil(limit / queries.length)}&numericFilters=points>1`;
-      const commentResponse = await fetch(commentUrl);
-      if (commentResponse.ok) {
-        const data = await commentResponse.json();
-        for (const hit of data.hits || []) {
-          if (hit.comment_text && hit.comment_text.length > 30) {
-            allComments.push({
-              text: stripHtml(hit.comment_text).substring(0, 500),
-              author: hit.author || '',
-              points: hit.points || 0,
-              createdAt: hit.created_at || '',
-              objectID: hit.objectID || '',
-              storyTitle: hit.story_title || '',
-            });
-          }
-        }
-      }
-    } catch (error) {
-      console.error(`HN search failed for "${query}":`, error);
-    }
-
-    await new Promise(r => setTimeout(r, 200));
-  }
-
-  const uniqueStories = Array.from(new Map(allStories.map(s => [s.objectID, s])).values());
-  const uniqueComments = Array.from(new Map(allComments.map(c => [c.objectID, c])).values());
-
-  return {
-    stories: uniqueStories.sort((a, b) => b.points - a.points).slice(0, limit),
-    comments: uniqueComments.sort((a, b) => b.points - a.points).slice(0, limit),
-  };
-}
-
-function stripHtml(html: string): string {
-  return html.replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-// ============================================================================
-// STEP 3: SEARCH REDDIT
-// Uses OAuth when REDDIT_CLIENT_ID/SECRET are set; falls back to PullPush.io
-// which bypasses Reddit's 403 datacenter IP blocks (GigaBrain strategy).
-// ============================================================================
-
-let _cachedRedditToken: { token: string; expiresAt: number } | null = null;
-
-async function getRedditToken(): Promise<string | null> {
-  const clientId = Deno.env.get('REDDIT_CLIENT_ID');
-  const clientSecret = Deno.env.get('REDDIT_CLIENT_SECRET');
-  if (!clientId || !clientSecret) return null;
-
-  if (_cachedRedditToken && Date.now() < _cachedRedditToken.expiresAt - 60_000) {
-    return _cachedRedditToken.token;
-  }
-
-  try {
-    const response = await fetch('https://www.reddit.com/api/v1/access_token', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'FounderLens/1.0 (by /u/founderlens_app)',
-      },
-      body: 'grant_type=client_credentials',
-    });
-    if (response.ok) {
-      const data = await response.json();
-      _cachedRedditToken = { token: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
-      console.log('✅ Reddit OAuth token obtained');
-      return _cachedRedditToken.token;
-    }
-    console.warn(`⚠️ Reddit OAuth failed (${response.status}) — falling back to PullPush`);
-  } catch (error) {
-    console.error('Reddit auth error:', error);
-  }
-  return null;
-}
-
-async function searchReddit(
-  token: string | null,
-  queries: string[],
-  subreddits: string[],
-  limit: number = 30
-): Promise<RedditPost[]> {
-  if (token) {
-    console.log('🔐 Using Reddit OAuth API');
-    return _searchRedditOAuth(token, queries, subreddits, limit);
-  }
-  console.log('🔄 Using PullPush (topic search + subreddit preference)');
-  return _searchPullPush(queries, subreddits, limit);
-}
-
-async function _searchRedditOAuth(
-  token: string,
-  queries: string[],
-  subreddits: string[],
-  limit: number
-): Promise<RedditPost[]> {
-  const allPosts: RedditPost[] = [];
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    'User-Agent': 'FounderLens/1.0 (by /u/founderlens_app)',
-  };
-
-  for (const subreddit of subreddits.slice(0, 8)) {
-    for (const query of queries.slice(0, 4)) {
-      try {
-        const url = `https://oauth.reddit.com/r/${subreddit}/search?q=${encodeURIComponent(query)}&sort=relevance&t=year&limit=10&restrict_sr=on`;
-        const response = await fetch(url, { headers });
-        if (!response.ok) continue;
-
-        const data = await response.json();
-        for (const child of data?.data?.children || []) {
-          const post = child.data;
-          if (!post || post.score < 2) continue;
-
-          let topComments: { body: string; author: string; score: number }[] = [];
-          try {
-            const commentsUrl = `https://oauth.reddit.com/r/${subreddit}/comments/${post.id}?sort=top&limit=6`;
-            const commentsResponse = await fetch(commentsUrl, { headers });
-            if (commentsResponse.ok) {
-              const commentsData = await commentsResponse.json();
-              topComments = (commentsData?.[1]?.data?.children || [])
-                .filter((c: any) => c.data?.body && c.data.body !== '[deleted]' && c.data.body.length > 20)
-                .slice(0, 6)
-                .map((c: any) => ({ body: c.data.body.substring(0, 500), author: c.data.author || '', score: c.data.score || 0 }));
-            }
-          } catch (e) { /* ignore */ }
-
-          allPosts.push({
-            title: post.title || '',
-            selftext: (post.selftext || '').substring(0, 1000),
-            author: post.author || '',
-            subreddit: post.subreddit || subreddit,
-            score: post.score || 0,
-            numComments: post.num_comments || 0,
-            permalink: `https://reddit.com${post.permalink || ''}`,
-            createdUtc: post.created_utc || 0,
-            upvoteRatio: post.upvote_ratio || 0,
-            topComments,
-          });
-        }
-        await new Promise(r => setTimeout(r, 300));
-      } catch (error) {
-        console.error(`OAuth search error r/${subreddit}:`, error);
-      }
-    }
-  }
-
-  const unique = Array.from(new Map(allPosts.map(p => [p.permalink, p])).values());
-  return unique.sort((a, b) => b.score - a.score).slice(0, limit);
-}
-
-// PullPush.io — community Pushshift mirror, works from Deno/cloud environments
-// Strategy: search by TOPIC across all Reddit, then use subreddits as a
-// relevance signal (prefer posts from target subreddits, don't exclude others).
-async function _searchPullPush(queries: string[], subreddits: string[], limit: number): Promise<RedditPost[]> {
-  const allPosts: RedditPost[] = [];
-  const targetSubSet = new Set(subreddits.map(s => s.toLowerCase().replace(/^r\//, '')));
-  console.log(`📡 PullPush: ${queries.length} queries across all Reddit (targeting ${subreddits.length} subreddits as preference)`);
-
-  // Strategy 1: search by topic across ALL Reddit (catches posts in any subreddit)
-  for (const query of queries.slice(0, 6)) {
-    try {
-      const url = new URL('https://api.pullpush.io/reddit/search/submission/');
-      url.searchParams.set('q', query);
-      url.searchParams.set('size', '20');
-      url.searchParams.set('score', '>1');
-
-      const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
-      if (!res.ok) {
-        console.warn(`PullPush ${res.status} for "${query}"`);
-        continue;
-      }
-
+    if (res.ok) {
       const data = await res.json();
-      for (const p of data?.data ?? []) {
-        if (!p.title) continue;
-        allPosts.push({
-          title: p.title,
-          selftext: (p.selftext ?? '').substring(0, 1000),
-          author: p.author ?? '[deleted]',
-          subreddit: p.subreddit ?? 'unknown',
-          score: p.score ?? 0,
-          numComments: p.num_comments ?? 0,
-          permalink: p.permalink ? `https://reddit.com${p.permalink}` : `https://reddit.com/r/${p.subreddit}/comments/${p.id}/`,
-          createdUtc: p.created_utc ?? 0,
-          upvoteRatio: p.upvote_ratio ?? 0,
-          topComments: [],
-        });
-      }
-      await new Promise(r => setTimeout(r, 350));
-    } catch (e) {
-      console.error(`PullPush error for "${query}":`, e);
+      return JSON.parse(data.choices[0].message.content);
     }
+  } catch (e) {
+    console.error('Search plan error:', e);
   }
 
-  // Strategy 2: also search directly within target subreddits
-  // PullPush supports subreddit-scoped search — gets posts the global search might miss
-  for (const subreddit of subreddits.slice(0, 5)) {
-    for (const query of queries.slice(0, 2)) {
-      try {
-        const url = new URL('https://api.pullpush.io/reddit/search/submission/');
-        url.searchParams.set('q', query);
-        url.searchParams.set('subreddit', subreddit.replace(/^r\//, ''));
-        url.searchParams.set('size', '10');
-        url.searchParams.set('score', '>0');
-
-        const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
-        if (!res.ok) continue;
-
-        const data = await res.json();
-        for (const p of data?.data ?? []) {
-          if (!p.title) continue;
-          allPosts.push({
-            title: p.title,
-            selftext: (p.selftext ?? '').substring(0, 1000),
-            author: p.author ?? '[deleted]',
-            subreddit: p.subreddit ?? subreddit,
-            score: p.score ?? 0,
-            numComments: p.num_comments ?? 0,
-            permalink: p.permalink ? `https://reddit.com${p.permalink}` : `https://reddit.com/r/${p.subreddit}/comments/${p.id}/`,
-            createdUtc: p.created_utc ?? 0,
-            upvoteRatio: p.upvote_ratio ?? 0,
-            topComments: [],
-          });
-        }
-        await new Promise(r => setTimeout(r, 300));
-      } catch (e) { /* ignore */ }
-    }
-  }
-
-  // Deduplicate, then sort: posts from target subreddits first, then by score
-  const seen = new Map<string, RedditPost>();
-  for (const p of allPosts) {
-    const key = p.permalink || p.title;
-    if (!seen.has(key)) seen.set(key, p);
-  }
-  const unique = [...seen.values()];
-
-  unique.sort((a, b) => {
-    const aInTarget = targetSubSet.has(a.subreddit.toLowerCase().replace(/^r\//, '')) ? 1 : 0;
-    const bInTarget = targetSubSet.has(b.subreddit.toLowerCase().replace(/^r\//, '')) ? 1 : 0;
-    if (aInTarget !== bInTarget) return bInTarget - aInTarget; // target subs float to top
-    return b.score - a.score;
-  });
-
-  const topPosts = unique.slice(0, limit);
-  const inTargetCount = topPosts.filter(p => targetSubSet.has(p.subreddit.toLowerCase().replace(/^r\//, ''))).length;
-  console.log(`📬 PullPush: ${unique.length} posts found (${inTargetCount} from target subreddits in top ${topPosts.length})`);
-
-  // Fetch comments for top posts
-  for (const post of topPosts.slice(0, 8)) {
-    try {
-      const postId = post.permalink.split('/')[6] ?? post.permalink.split('/').pop();
-      if (!postId) continue;
-      const cUrl = new URL('https://api.pullpush.io/reddit/search/comment/');
-      cUrl.searchParams.set('link_id', `t3_${postId}`);
-      cUrl.searchParams.set('size', '6');
-      cUrl.searchParams.set('score', '>0');
-      const cRes = await fetch(cUrl.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
-      if (cRes.ok) {
-        const cData = await cRes.json();
-        post.topComments = (cData?.data ?? [])
-          .filter((c: any) => c.body && c.body !== '[deleted]' && c.body !== '[removed]')
-          .slice(0, 6)
-          .map((c: any) => ({ body: c.body.substring(0, 500), author: c.author ?? '', score: c.score ?? 0 }));
-      }
-      await new Promise(r => setTimeout(r, 250));
-    } catch (e) { /* ignore */ }
-  }
-
-  return topPosts;
-}
-
-// Legacy wrapper
-async function searchRedditPublic(
-  queries: string[],
-  subreddits: string[],
-  limit: number = 25
-): Promise<RedditPost[]> {
-  return _searchPullPush(queries, subreddits, limit);
-}
-
-// STEP 3b: WEB FORUM SEARCH (Quora, forums, blogs via DuckDuckGo)
-// Diversifies sources beyond just HN and Reddit
-// ============================================================================
-
-async function searchWebForums(queries: string[], limit: number = 15): Promise<WebForumResult[]> {
-  const results: WebForumResult[] = [];
-
-  for (const query of queries.slice(0, 4)) {
-    try {
-      // Primary: DuckDuckGo HTML search (more stable than Lite)
-      const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: `q=${encodeURIComponent(query)}`,
-      });
-
-      if (response.ok) {
-        const html = await response.text();
-
-        // Parse DDG HTML results — uses class="result__a" for links and class="result__snippet" for snippets
-        const linkPattern = /<a[^>]+class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-        const snippetPattern = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
-
-        const links: { url: string; title: string }[] = [];
-        let match;
-        while ((match = linkPattern.exec(html)) !== null) {
-          const href = match[1];
-          // DDG wraps URLs in a redirect — extract the actual URL
-          const actualUrl = href.includes('uddg=') ? decodeURIComponent(href.split('uddg=')[1]?.split('&')[0] || href) : href;
-          links.push({ url: actualUrl, title: stripHtml(match[2]) });
-        }
-
-        const snippets: string[] = [];
-        while ((match = snippetPattern.exec(html)) !== null) {
-          snippets.push(stripHtml(match[1]));
-        }
-
-        // If primary parsing found nothing, try Lite format as fallback
-        if (links.length === 0) {
-          const liteResultPattern = /<a[^>]+href="([^"]+)"[^>]*class="result-link"[^>]*>([^<]+)<\/a>/gi;
-          const liteSnippetPattern = /<td[^>]*class="result-snippet"[^>]*>([\s\S]*?)<\/td>/gi;
-          while ((match = liteResultPattern.exec(html)) !== null) {
-            links.push({ url: match[1], title: stripHtml(match[2]) });
-          }
-          while ((match = liteSnippetPattern.exec(html)) !== null) {
-            snippets.push(stripHtml(match[1]));
-          }
-        }
-
-        if (links.length === 0) {
-          console.warn(`⚠️ DDG returned ${html.length} bytes of HTML but no results parsed for query: "${query}"`);
-        }
-
-        for (let i = 0; i < Math.min(links.length, 5); i++) {
-          const link = links[i];
-          // Only include results from forums/Q&A/discussion sites
-          const isForumSite = /quora|stackexchange|stackoverflow|facebook\.com\/groups|forum|community|discuss|medium\.com|dev\.to|producthunt|babycenter|whattoexpect|mumsnet|healthline|reddit|ycombinator|indiehackers|twitter|x\.com|linkedin|pinterest|tumblr|wordpress|blogspot|substack|hackernoon|towardsdatascience|freecodecamp/i.test(link.url);
-          if (isForumSite || snippets[i]?.length > 30) {
-            results.push({
-              title: link.title,
-              snippet: (snippets[i] || '').substring(0, 300),
-              url: link.url,
-              source: extractDomain(link.url),
-            });
-          }
-        }
-      } else {
-        console.warn(`⚠️ DDG search returned status ${response.status} for query: "${query}"`);
-      }
-
-      await new Promise(r => setTimeout(r, 500));
-    } catch (error) {
-      console.error(`Web search failed for "${query}":`, error);
-    }
-  }
-
-  // Deduplicate by URL
-  const unique = Array.from(new Map(results.map(r => [r.url, r])).values());
-  console.log(`🌐 Web forum search found ${unique.length} results`);
-  return unique.slice(0, limit);
-}
-
-function extractDomain(url: string): string {
-  try {
-    const hostname = new URL(url).hostname.replace('www.', '');
-    return hostname;
-  } catch {
-    return 'web';
-  }
-}
-
-// ============================================================================
-// STEP 3c: MULTILINGUAL SEARCH SUPPORT
-// For non-English markets, search in local language too
-// ============================================================================
-
-async function searchMultilingual(
-  queries: string[],
-  apiKey: string
-): Promise<{ stories: HNResult[]; comments: HNComment[] }> {
-  // Use the local language queries for HN search (HN Algolia handles multilingual)
-  if (queries.length === 0) {
-    return { stories: [], comments: [] };
-  }
-  // Search HN and web with these queries — HN may have limited results
-  // but web forums in other languages can have rich data
-  return searchHackerNews(queries, 10);
-}
-
-// ============================================================================
-// STEP 4: AI-POWERED RELEVANCE FILTERING (GigaBrain's core insight)
-// Filter out noise BEFORE deep analysis — only keep results actually about the topic
-// ============================================================================
-
-async function filterForRelevance(
-  opportunity: { title: string; description: string; targetMarket: string; problemStatement: string },
-  hnStories: HNResult[],
-  hnComments: HNComment[],
-  redditPosts: RedditPost[],
-  keywords: string[],
-  apiKey: string
-): Promise<{ stories: HNResult[]; comments: HNComment[]; posts: RedditPost[] }> {
-
-  // First pass: keyword-based pre-filter to reduce what we send to AI
-  const keywordsLower = keywords.map(k => k.toLowerCase());
-  const opportunityTerms = `${opportunity.title} ${opportunity.description} ${opportunity.targetMarket} ${opportunity.problemStatement}`
-    .toLowerCase();
-
-  function hasKeywordOverlap(text: string): boolean {
-    const lower = text.toLowerCase();
-    return keywordsLower.some(kw => lower.includes(kw));
-  }
-
-  const preFilteredStories = hnStories.filter(s =>
-    hasKeywordOverlap(s.title) || (s.storyText && hasKeywordOverlap(s.storyText))
-  );
-  const preFilteredComments = hnComments.filter(c =>
-    hasKeywordOverlap(c.text) || hasKeywordOverlap(c.storyTitle)
-  );
-  const preFilteredPosts = redditPosts.filter(p =>
-    hasKeywordOverlap(p.title) || hasKeywordOverlap(p.selftext)
-  );
-
-  // If keyword filtering eliminated everything, include top items by score
-  // (the AI query was likely specific enough that results might still be relevant)
-  const stories = preFilteredStories.length > 0 ? preFilteredStories : hnStories.slice(0, 10);
-  const comments = preFilteredComments.length > 0 ? preFilteredComments : hnComments.slice(0, 15);
-  const posts = preFilteredPosts.length > 0 ? preFilteredPosts : redditPosts.slice(0, 10);
-
-  // Second pass: AI relevance scoring for borderline cases
-  // Build a concise list of items for AI to score
-  const items: { id: string; type: string; text: string }[] = [];
-
-  stories.slice(0, 15).forEach(s => {
-    items.push({ id: `hn_story_${s.objectID}`, type: 'hn_story', text: `${s.title} ${s.storyText || ''}`.substring(0, 200) });
-  });
-  comments.slice(0, 20).forEach(c => {
-    items.push({ id: `hn_comment_${c.objectID}`, type: 'hn_comment', text: `[Story: ${c.storyTitle}] ${c.text}`.substring(0, 200) });
-  });
-  posts.slice(0, 15).forEach(p => {
-    items.push({ id: `reddit_${p.permalink}`, type: 'reddit', text: `[r/${p.subreddit}] ${p.title} ${p.selftext}`.substring(0, 200) });
-  });
-
-  if (items.length === 0) {
-    return { stories: [], comments: [], posts: [] };
-  }
-
-  try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a relevance filter. Return valid JSON only.',
-          },
-          {
-            role: 'user',
-            content: `Rate each item's relevance to this business opportunity on a scale of 0-10.
-
-OPPORTUNITY: "${opportunity.title}"
-PROBLEM: "${opportunity.problemStatement}"
-TARGET MARKET: "${opportunity.targetMarket}"
-
-An item is relevant (7+) if it discusses the SAME topic, industry, problem, or target audience.
-An item is somewhat relevant (4-6) if it discusses a closely related topic.
-An item is irrelevant (0-3) if it discusses a completely different topic or generic complaints.
-
-ITEMS:
-${items.map((item, i) => `[${i}] ${item.text}`).join('\n')}
-
-Return JSON: { "scores": [number, number, ...] } — one score per item in order.`,
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 500,
-        response_format: { type: 'json_object' },
-      }),
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      const result = JSON.parse(data.choices[0].message.content);
-      const scores: number[] = result.scores || [];
-
-      // Build sets of relevant IDs (score >= 3 — lowered from 4 to avoid dropping borderline-relevant results)
-      const relevantIds = new Set<string>();
-      items.forEach((item, i) => {
-        if ((scores[i] || 0) >= 3) {
-          relevantIds.add(item.id);
-        }
-      });
-
-      let filteredStories = stories.filter(s => relevantIds.has(`hn_story_${s.objectID}`));
-      let filteredComments = comments.filter(c => relevantIds.has(`hn_comment_${c.objectID}`));
-      let filteredPosts = posts.filter(p => relevantIds.has(`reddit_${p.permalink}`));
-
-      // If AI filtering eliminated everything (or nearly everything) but we had input data,
-      // keep the top-scored items — this prevents returning 0 results for legitimate searches
-      const totalFiltered = filteredStories.length + filteredComments.length + filteredPosts.length;
-      if (totalFiltered < 3 && items.length > 0) {
-        console.warn(`⚠️ AI relevance filter only kept ${totalFiltered}/${items.length} items — supplementing with top-scored items`);
-        const scoredItems = items.map((item, i) => ({ ...item, score: scores[i] || 0 }));
-        scoredItems.sort((a, b) => b.score - a.score);
-        // Keep enough items to reach at least 5 total (or all items if fewer available)
-        const keepCount = Math.min(items.length, Math.max(5, 5 - totalFiltered));
-        const keepIds = new Set(scoredItems.slice(0, keepCount).map(item => item.id));
-        // Merge — add items from keepIds that aren't already in the filtered sets
-        const existingIds = new Set([
-          ...filteredStories.map(s => `hn_story_${s.objectID}`),
-          ...filteredComments.map(c => `hn_comment_${c.objectID}`),
-          ...filteredPosts.map(p => `reddit_${p.permalink}`),
-        ]);
-        for (const id of keepIds) {
-          if (!existingIds.has(id)) {
-            // Add the supplemental item to the appropriate filtered list
-            const story = stories.find(s => `hn_story_${s.objectID}` === id);
-            if (story) { filteredStories.push(story); continue; }
-            const comment = comments.find(c => `hn_comment_${c.objectID}` === id);
-            if (comment) { filteredComments.push(comment); continue; }
-            const post = posts.find(p => `reddit_${p.permalink}` === id);
-            if (post) { filteredPosts.push(post); }
-          }
-        }
-      }
-
-      console.log(`🎯 Relevance filter: ${filteredStories.length}/${stories.length} stories, ${filteredComments.length}/${comments.length} comments, ${filteredPosts.length}/${posts.length} posts kept`);
-
-      return {
-        stories: filteredStories,
-        comments: filteredComments,
-        posts: filteredPosts,
-      };
-    }
-  } catch (error) {
-    console.error('Relevance filtering failed, using pre-filtered results:', error);
-  }
-
-  // Fallback: return keyword-filtered results
-  return { stories, comments, posts };
-}
-
-// ============================================================================
-// STEP 5: DEEP ANALYSIS WITH STRICT RELEVANCE ENFORCEMENT
-// ============================================================================
-
-interface ResearchAnalysis {
-  frustrationQuotes: {
-    quote: string;
-    source: string;
-    context: string;
-    frustrationLevel: 'mild' | 'moderate' | 'severe';
-  }[];
-  painPointCategories: {
-    category: string;
-    description: string;
-    frequency: 'rare' | 'common' | 'very_common';
-    specificExamples: string[];
-    currentWorkarounds: string[];
-  }[];
-  industryTrends: {
-    trend: string;
-    direction: 'growing' | 'declining' | 'stable';
-    relevance: string;
-    opportunity: string;
-  }[];
-  currentSolutionComplaints: {
-    solution: string;
-    complaints: string[];
-    userSentiment: 'negative' | 'mixed' | 'disappointed';
-  }[];
-  marketGaps: {
-    gap: string;
-    evidence: string;
-    potentialValue: 'low' | 'medium' | 'high';
-  }[];
-  overallSentiment: {
-    score: number;
-    summary: string;
-    strongestFrustration: string;
-    biggestOpportunity: string;
+  // Fallback
+  return {
+    queries: [opportunity.title, `${opportunity.targetMarket} problems`, `${opportunity.title} alternative`],
+    subreddits: ['Entrepreneur', 'startups', 'smallbusiness'],
+    keywords: opportunity.title.toLowerCase().split(' ').filter(w => w.length > 3),
+    analogousMarkets: [],
+    webSearchQueries: [
+      `${opportunity.title} community discussion complaints`,
+      `${opportunity.title} competitor apps reviews`,
+    ],
   };
 }
 
-async function analyzeWithOpenAI(
+// ============================================================================
+// STEP 5: DEEP AI SYNTHESIS — Acts as a startup researcher
+// ============================================================================
+
+async function synthesizeResearch(
   opportunity: { title: string; description: string; targetMarket: string; problemStatement: string },
-  hnData: { stories: HNResult[]; comments: HNComment[] },
-  redditData: RedditPost[],
-  webData: WebForumResult[],
+  data: {
+    redditPosts: any[];
+    communityEvidence: WebSearchResult;
+    competitorApps: AppStoreApp[];
+    competitorEvidence: WebSearchResult;
+    twitterEvidence: WebSearchResult;
+    analogousMarkets: WebSearchResult;
+    plan: { analogousMarkets: string[] };
+  },
   apiKey: string
-): Promise<ResearchAnalysis> {
-  const hnContext = hnData.comments.slice(0, 20).map(c =>
-    `[HN Comment by ${c.author} (${c.points} pts) on "${c.storyTitle}"]: "${c.text}"`
-  ).join('\n');
+): Promise<ResearchReport> {
+  const totalDataPoints = data.redditPosts.length + data.communityEvidence.citations.length + data.competitorApps.length + data.competitorEvidence.citations.length + data.twitterEvidence.citations.length + data.analogousMarkets.citations.length;
 
-  const hnStoriesContext = hnData.stories.slice(0, 10).map(s =>
-    `[HN Story: "${s.title}" (${s.points} pts, ${s.numComments} comments)]${s.storyText ? `: ${s.storyText.substring(0, 200)}` : ''}`
-  ).join('\n');
+  const dataQuality: 'rich' | 'moderate' | 'sparse' = totalDataPoints >= 20 ? 'rich' : totalDataPoints >= 8 ? 'moderate' : 'sparse';
 
-  const redditContext = redditData.slice(0, 15).map(p => {
-    const commentsStr = p.topComments.slice(0, 3).map(c =>
-      `  - "${c.body.substring(0, 200)}" (${c.score} pts)`
-    ).join('\n');
-    return `[Reddit r/${p.subreddit}: "${p.title}" (${p.score} pts, ${p.numComments} comments)]\n${p.selftext.substring(0, 200)}\nTop comments:\n${commentsStr}`;
-  }).join('\n\n');
-
-  const webContext = webData.slice(0, 10).map(w =>
-    `[${w.source}: "${w.title}"]\n${w.snippet}`
+  // Build context for the AI
+  const redditContext = data.redditPosts.slice(0, 10).map((p, i) =>
+    `[Reddit ${i + 1}] r/${p.subreddit} | ${p.score}pts | "${p.title}"\n${p.selftext.slice(0, 200)}`
   ).join('\n\n');
 
-  const hasRealData = hnData.stories.length > 0 || hnData.comments.length > 0 || redditData.length > 0 || webData.length > 0;
-  const totalDataPoints = hnData.stories.length + hnData.comments.length + redditData.length + webData.length;
+  const webContext = [
+    data.communityEvidence.summary ? `COMMUNITY EVIDENCE:\n${data.communityEvidence.summary.slice(0, 600)}` : '',
+    data.competitorEvidence.summary ? `COMPETITOR LANDSCAPE:\n${data.competitorEvidence.summary.slice(0, 600)}` : '',
+    data.twitterEvidence.summary ? `TWITTER/SOCIAL EVIDENCE:\n${data.twitterEvidence.summary.slice(0, 400)}` : '',
+    data.analogousMarkets.summary ? `ANALOGOUS MARKETS:\n${data.analogousMarkets.summary.slice(0, 600)}` : '',
+  ].filter(Boolean).join('\n\n');
 
-  const systemPrompt = `You are an expert market researcher for FounderLens. You analyze community discussions to extract actionable insights.
+  const appContext = data.competitorApps.length > 0
+    ? `COMPETITOR APPS FOUND:\n${data.competitorApps.slice(0, 6).map(a => `- ${a.name} (${a.rating}★, ${a.ratingCount} ratings): ${a.description.slice(0, 150)}`).join('\n')}`
+    : 'No direct competitor apps found on App Store.';
 
-CRITICAL RULES:
-1. Every quote, pain point, and insight MUST be DIRECTLY relevant to the specific opportunity: "${opportunity.title}"
-2. The opportunity targets: "${opportunity.targetMarket}" and solves: "${opportunity.problemStatement}"
-3. Do NOT include generic tech/business frustrations that aren't about this specific topic
-4. If a quote is about a different industry/topic entirely, EXCLUDE IT — even if it was in the research data
-5. If you don't have enough relevant real data, say so honestly. DO NOT pad results with generic complaints
-6. When quoting from real data, use exact words and cite the source. When using industry knowledge, label it as "Industry Research"
-7. All pain points, trends, and gaps must relate to ${opportunity.title}'s specific domain
+  const allCitations = [
+    ...data.communityEvidence.citations,
+    ...data.competitorEvidence.citations,
+    ...data.twitterEvidence.citations,
+    ...data.analogousMarkets.citations,
+  ].slice(0, 15);
 
-You MUST return a JSON object matching the exact structure requested.`;
+  const citationContext = allCitations.map((c, i) => `[${i + 1}] ${c.title} — ${c.url}`).join('\n');
 
-  const userPrompt = `Analyze this business opportunity using ONLY relevant community data.
+  const systemPrompt = `You are a senior startup researcher and market analyst hired to validate a business idea. You have access to:
+- Real community discussions from Reddit
+- Live web search results with citations  
+- App Store competitor data
+- Analogous market research
+
+Your job is to produce a thorough, honest validation report. You MUST:
+1. Cite real sources when they exist (use [N] citation format)
+2. Use analogous market evidence when direct evidence is sparse
+3. Be brutally honest about gaps and risks
+4. Give a clear go/no-go recommendation with reasoning
+5. Distinguish between "no data found" (likely underserved niche) vs "data shows no demand"
+6. Think like a VC associate — what would make you excited or concerned about this?
+
+Return valid JSON only.`;
+
+  const userPrompt = `Validate this business opportunity as a senior startup researcher:
 
 ## OPPORTUNITY
-- **Title**: ${opportunity.title}
-- **Description**: ${opportunity.description}
-- **Target Market**: ${opportunity.targetMarket}
-- **Problem Statement**: ${opportunity.problemStatement}
+Title: "${opportunity.title}"
+Description: ${opportunity.description}
+Target Market: ${opportunity.targetMarket}
+Problem: ${opportunity.problemStatement}
 
-## PRE-FILTERED COMMUNITY DATA (already filtered for relevance)
+## EVIDENCE GATHERED (${totalDataPoints} total data points, quality: ${dataQuality})
 
-### Hacker News Stories (${hnData.stories.length} relevant):
-${hnStoriesContext || 'No relevant HN stories found.'}
+${redditPosts_context(data.redditPosts)}
 
-### Hacker News Comments (${hnData.comments.length} relevant):
-${hnContext || 'No relevant HN comments found.'}
+${webContext}
 
-### Reddit Discussions (${redditData.length} relevant):
-${redditContext || 'No Reddit discussions found.'}
+${appContext}
 
-### Web Forums, Quora & Blogs (${webData.length} results):
-${webContext || 'No web forum results found.'}
+## SOURCES FOUND
+${citationContext || 'No direct citations found — using AI domain knowledge and analogous market research'}
 
 ---
 
-${hasRealData
-    ? `You have ${totalDataPoints} pre-filtered data points. Extract insights ONLY from items that are directly about "${opportunity.title}" or its specific problem domain. If a quote discusses an unrelated topic, SKIP IT entirely.`
-    : `Very limited community data was found for this specific topic. This itself is a useful signal — it may indicate a niche market or untapped opportunity. Use your deep knowledge of "${opportunity.targetMarket}" and the specific problem of "${opportunity.problemStatement}" to provide research-quality insights. Be specific to THIS domain — do not provide generic business advice. Label all insights as "Industry Research" source.`
-  }
-
-Return a JSON object with this structure:
+Provide a comprehensive startup research report. JSON format:
 {
-  "frustrationQuotes": [
-    {
-      "quote": "Exact quote from community data (or representative quote from industry knowledge)",
-      "source": "HN/Reddit/Industry Research",
-      "context": "How this specifically relates to ${opportunity.title}",
-      "frustrationLevel": "mild|moderate|severe"
-    }
+  "demandSignals": ["up to 6 specific demand signals — cite sources with [N] when available. Include analogous market evidence if direct evidence is sparse"],
+  "painPoints": ["up to 6 specific pain points from direct evidence OR analogous communities. Label source: [Reddit], [Web], [Analogous: Nigerian diaspora], [AI Research], etc."],
+  "competitors": [
+    { "name": "competitor name", "description": "what they do", "gap": "what they're missing that your product could solve" }
   ],
-  "painPointCategories": [
-    {
-      "category": "Category specific to ${opportunity.targetMarket}",
-      "description": "What this pain point is about in context of ${opportunity.title}",
-      "frequency": "rare|common|very_common",
-      "specificExamples": ["Examples specific to this domain"],
-      "currentWorkarounds": ["How people currently deal with this"]
-    }
-  ],
-  "industryTrends": [
-    {
-      "trend": "Trend specific to this market",
-      "direction": "growing|declining|stable",
-      "relevance": "How this relates to ${opportunity.title}",
-      "opportunity": "What opportunity this creates for this specific product"
-    }
-  ],
-  "currentSolutionComplaints": [
-    {
-      "solution": "Name of actual competitor/alternative in this space",
-      "complaints": ["Specific complaints about this solution"],
-      "userSentiment": "negative|mixed|disappointed"
-    }
-  ],
-  "marketGaps": [
-    {
-      "gap": "Gap specific to ${opportunity.targetMarket}",
-      "evidence": "Evidence from the data or industry knowledge",
-      "potentialValue": "low|medium|high"
-    }
-  ],
-  "overallSentiment": {
-    "score": 0-100,
-    "summary": "2-3 sentence summary focused on ${opportunity.title}'s market landscape",
-    "strongestFrustration": "The biggest frustration relevant to this specific product",
-    "biggestOpportunity": "The biggest opportunity for this specific product"
-  }
+  "marketGaps": ["up to 5 specific unmet needs or gaps in the current market"],
+  "risks": ["up to 4 honest risks or concerns about this opportunity"],
+  "opportunityScore": 0,
+  "verdict": "strong|moderate|weak|insufficient_data",
+  "verdictReason": "2-3 sentences explaining the verdict",
+  "recommendation": "Specific, actionable go/no-go recommendation with next steps",
+  "briefSummary": "3-4 sentences: what is this market, what evidence exists, what is the opportunity? Written for the founder to quickly understand the finding.",
+  "fullReport": "Full markdown research report with sections: ## Market Overview, ## Evidence of Demand, ## Competitive Landscape, ## Analogous Markets, ## Key Risks, ## Recommendation. Include citations [N] where available. Min 400 words. Be specific, not generic.",
+  "evidenceSources": ["list of source types used: Reddit, Web Search, App Store, Analogous Markets, AI Research"],
+  "dataQuality": "${dataQuality}"
 }
 
-${hasRealData
-    ? 'Generate insights based on the real data. Only include 3-8 frustration quotes that are ACTUALLY relevant.'
-    : 'Generate 5-8 industry-knowledge-based insights. Be honest that these are research-based, not from live community data.'
-  }`;
+opportunityScore: 0-100. 
+- 70-100: Strong evidence of unmet demand
+- 50-69: Moderate signals, worth exploring  
+- 30-49: Weak signals, needs more validation
+- 0-29: Insufficient evidence or clear negative signals
+If data is sparse but analogous markets show strong evidence: score 40-60 and explain.`;
 
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-2024-08-06',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.3,
-      max_tokens: 4000,
-      response_format: { type: 'json_object' },
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('OpenAI analysis failed:', response.status, errorText);
-    throw new Error(`OpenAI analysis failed: ${response.status}`);
+  function redditPosts_context(posts: any[]): string {
+    if (posts.length === 0) return 'REDDIT: No relevant posts found.';
+    return `REDDIT POSTS (${posts.length} found):\n${posts.slice(0, 8).map((p, i) => `[Reddit ${i + 1}] r/${p.subreddit} (${p.score}pts): "${p.title}"\n${p.selftext.slice(0, 150)}`).join('\n\n')}`;
   }
 
-  const result = await response.json();
-  const content = result.choices?.[0]?.message?.content;
-  if (!content) throw new Error('No content in OpenAI response');
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        temperature: 0.2,
+        max_tokens: 4000,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }),
+    });
 
-  return JSON.parse(content) as ResearchAnalysis;
+    if (!res.ok) throw new Error(`OpenAI synthesis failed: ${res.status}`);
+    const result = await res.json();
+    const report = JSON.parse(result.choices[0].message.content);
+
+    return {
+      communityEvidence: data.communityEvidence,
+      competitorApps: data.competitorApps,
+      competitorEvidence: data.competitorEvidence,
+      twitterEvidence: data.twitterEvidence,
+      analogousMarkets: data.analogousMarkets,
+      demandSignals: report.demandSignals || [],
+      painPoints: report.painPoints || [],
+      competitors: report.competitors || [],
+      marketGaps: report.marketGaps || [],
+      risks: report.risks || [],
+      dataQuality,
+      evidenceSources: report.evidenceSources || [],
+      totalDataPoints,
+      opportunityScore: Math.min(100, Math.max(0, report.opportunityScore || 0)),
+      verdict: report.verdict || 'insufficient_data',
+      verdictReason: report.verdictReason || '',
+      recommendation: report.recommendation || '',
+      briefSummary: report.briefSummary || '',
+      fullReport: report.fullReport || '',
+      researchedAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    console.error('Synthesis error:', err);
+    throw err;
+  }
 }
 
 // ============================================================================
@@ -1006,9 +454,7 @@ ${hasRealData
 // ============================================================================
 
 serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
     const {
@@ -1023,14 +469,17 @@ serve(async (req: Request) => {
     } = await req.json();
 
     if (!opportunityId || !title) {
-      return new Response(JSON.stringify({ error: 'Missing required fields: opportunityId, title' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      return new Response(JSON.stringify({ error: 'Missing required fields' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     const apiKey = Deno.env.get('OPENAI_API_KEY');
-    // Continue without OpenAI key — will use domain-map fallback for search planning
+    if (!apiKey) {
+      return new Response(JSON.stringify({ error: 'OpenAI API key not configured' }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -1039,257 +488,154 @@ serve(async (req: Request) => {
 
     const opportunity = { title, description, targetMarket, problemStatement, tags };
 
-    console.log(`🔬 Starting research for: "${title}"`);
+    console.log(`\n🔬 FounderLens Research Engine v2 — "${title}"`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-    // Step 1: AI-powered search planning
-    console.log('🧠 Generating targeted search plan...');
-    const aiSearchPlan = await generateSearchPlan(opportunity, apiKey);
+    // Step 1: Generate research plan
+    console.log('📋 Step 1: Generating research plan...');
+    const plan = await generateSearchPlan(opportunity, apiKey);
+    console.log(`   Queries: ${plan.queries.slice(0, 3).join(' | ')}`);
+    console.log(`   Subreddits: ${plan.subreddits.slice(0, 5).join(', ')}`);
+    console.log(`   Analogous markets: ${plan.analogousMarkets.join(', ')}`);
 
-    // Merge: AI plan + client-provided subreddits/queries (client-side domain map + AI)
-    const searchPlan = {
-      ...aiSearchPlan,
-      subreddits: [...new Set([...aiSearchPlan.subreddits, ...clientSubreddits])].slice(0, 14),
-      queries: clientQueries.length > 0
-        ? [...new Set([...clientQueries, ...aiSearchPlan.queries])].slice(0, 10)
-        : aiSearchPlan.queries,
-    };
+    // Merge client subreddits with AI plan
+    const subreddits = [...new Set([...plan.subreddits, ...clientSubreddits])].slice(0, 14);
+    const queries = clientQueries.length > 0
+      ? [...new Set([...clientQueries, ...plan.queries])].slice(0, 10)
+      : plan.queries;
 
-    console.log(`🔍 Search queries: ${searchPlan.queries.join(' | ')}`);
-    console.log(`📌 Target subreddits (${searchPlan.subreddits.length}): ${searchPlan.subreddits.join(', ')}`);
-    console.log(`🏷️ Relevance keywords: ${searchPlan.keywords.join(', ')}`);
+    // Step 2: All searches in parallel
+    console.log('\n📡 Step 2: Searching all sources in parallel...');
+    const [redditPosts, competitorApps, communityEvidence, competitorEvidence, twitterEvidence, analogousMarketsEvidence] = await Promise.all([
 
-    // Step 2: Search all sources in parallel
-    console.log('📡 Searching Hacker News, Reddit, web forums & multilingual sources...');
+      // Reddit (PullPush two-pass)
+      searchReddit(queries, subreddits, 25).then(posts => {
+        console.log(`   ✓ Reddit: ${posts.length} posts`);
+        return posts;
+      }),
 
-    const redditToken = await getRedditToken();
+      // App Store competitors
+      searchAppStore(opportunity).then(apps => {
+        console.log(`   ✓ App Store: ${apps.length} competitor apps`);
+        return apps;
+      }),
 
-    const [hnData, redditData, webResults, multilingualData] = await Promise.all([
-      searchHackerNews(searchPlan.hnQueries, 30),
-      searchReddit(redditToken, searchPlan.queries, searchPlan.subreddits, 30),
-      searchWebForums(searchPlan.webQueries, 15),
-      searchMultilingual(searchPlan.localLanguageQueries, apiKey),
+      // Community pain points via web search
+      webSearch(
+        `Find community discussions, Reddit posts, Quora answers, and forum threads about problems faced by ${targetMarket}. Specifically about ${problemStatement}. Find real user complaints and requests for solutions.`,
+        apiKey
+      ).then(r => { console.log(`   ✓ Community web search: ${r.citations.length} citations`); return r; }),
+
+      // Competitor landscape via web search
+      webSearch(
+        `What existing apps, platforms, and services exist for "${title}"? Find competitor apps on App Store and Google Play, their user reviews, ratings, and what users complain about. Include any Ethiopian or African diaspora networking apps.`,
+        apiKey
+      ).then(r => { console.log(`   ✓ Competitor web search: ${r.citations.length} citations`); return r; }),
+
+      // Twitter/X and social evidence
+      webSearch(
+        `Find Twitter, X, LinkedIn posts, and social media discussions about "${title}" or "${targetMarket}" networking challenges. What are people saying? Any viral discussions?`,
+        apiKey
+      ).then(r => { console.log(`   ✓ Social/Twitter search: ${r.citations.length} citations`); return r; }),
+
+      // Analogous market research — THE KEY FOR NICHE MARKETS
+      plan.analogousMarkets.length > 0
+        ? webSearch(
+            `Research how analogous communities solved similar problems: ${plan.analogousMarkets.join(', ')}. What networking platforms did they build? What worked? What was the demand like? What can we learn for "${title}"?`,
+            apiKey
+          ).then(r => { console.log(`   ✓ Analogous markets: ${r.citations.length} citations (${plan.analogousMarkets.join(', ')})`); return r; })
+        : Promise.resolve({ query: '', summary: '', citations: [] }),
     ]);
 
-    // If Reddit returned nothing, try a direct title-based search as fallback
-    let finalRedditData = redditData;
-    if (redditData.length === 0) {
-      console.warn('⚠️ Reddit returned 0 results from planned queries — trying direct title search fallback');
-      const titleWords = title.replace(/[^a-z0-9\s]/gi, '').trim();
-      const fallbackQueries = [titleWords, ...titleWords.split(/\s+/).filter((w: string) => w.length > 4).slice(0, 2)];
-      const fallbackReddit = await searchReddit(redditToken, fallbackQueries, searchPlan.subreddits.slice(0, 3), 15);
-      if (fallbackReddit.length > 0) {
-        console.log(`✅ Reddit fallback search found ${fallbackReddit.length} posts`);
-        finalRedditData = fallbackReddit;
-      }
-    }
-
-    // If HN returned nothing, try a simpler title-based search
-    let finalHnData = hnData;
-    if (hnData.stories.length === 0 && hnData.comments.length === 0) {
-      console.warn('⚠️ HN returned 0 results from planned queries — trying direct title search fallback');
-      const titleWords = title.replace(/[^a-z0-9\s]/gi, '').trim();
-      const fallbackHn = await searchHackerNews([titleWords], 15);
-      if (fallbackHn.stories.length > 0 || fallbackHn.comments.length > 0) {
-        console.log(`✅ HN fallback search found ${fallbackHn.stories.length} stories, ${fallbackHn.comments.length} comments`);
-        finalHnData = fallbackHn;
-      }
-    }
-
-    // Merge multilingual HN results into main HN data
-    const mergedHnStories = [...finalHnData.stories, ...multilingualData.stories];
-    const mergedHnComments = [...finalHnData.comments, ...multilingualData.comments];
-    // Deduplicate
-    const uniqueStories = Array.from(new Map(mergedHnStories.map(s => [s.objectID, s])).values());
-    const uniqueComments = Array.from(new Map(mergedHnComments.map(c => [c.objectID, c])).values());
-
-    console.log(`📰 HN: ${uniqueStories.length} stories, ${uniqueComments.length} comments`);
-    console.log(`💬 Reddit: ${finalRedditData.length} posts`);
-    console.log(`🌐 Web forums: ${webResults.length} results`);
-    console.log(`🌍 Multilingual: ${multilingualData.stories.length + multilingualData.comments.length} results`);
-
-    // Step 3: AI-powered relevance filtering
-    console.log('🎯 Filtering results for relevance...');
-    const filtered = await filterForRelevance(
-      opportunity, uniqueStories, uniqueComments, finalRedditData, searchPlan.keywords, apiKey
-    );
-    console.log(`✅ After relevance filter: ${filtered.stories.length} stories, ${filtered.comments.length} comments, ${filtered.posts.length} posts`);
-
-    // Step 5: Deep AI Analysis on ONLY relevant data
-    console.log('🧠 Running deep AI analysis on relevant data...');
-    const analysis = await analyzeWithOpenAI(
+    // Step 3: Deep AI synthesis
+    console.log('\n🧠 Step 3: AI synthesis — acting as startup researcher...');
+    const report = await synthesizeResearch(
       opportunity,
-      { stories: filtered.stories, comments: filtered.comments },
-      filtered.posts,
-      webResults,
+      { redditPosts, communityEvidence, competitorApps, competitorEvidence, twitterEvidence, analogousMarkets: analogousMarketsEvidence, plan },
       apiKey
     );
-    console.log(`✅ Analysis complete: ${analysis.frustrationQuotes.length} quotes, ${analysis.painPointCategories.length} categories`);
 
-    // Step 6: Calculate research score
-    const relevantDataCount = filtered.stories.length + filtered.comments.length + filtered.posts.length + webResults.length;
-    const totalDataCount = uniqueStories.length + uniqueComments.length + finalRedditData.length + webResults.length;
-    const relevanceRatio = totalDataCount > 0 ? relevantDataCount / totalDataCount : 0;
+    console.log(`\n✅ Research complete!`);
+    console.log(`   Score: ${report.opportunityScore}/100 (${report.verdict})`);
+    console.log(`   Data points: ${report.totalDataPoints} (${report.dataQuality} quality)`);
+    console.log(`   Sources: ${report.evidenceSources.join(', ')}`);
 
-    // dataRichness only counts REAL community data, not AI-generated quotes/categories
-    const dataRichness = Math.min(100,
-      (filtered.stories.length * 4) +
-      (filtered.comments.length * 3) +
-      (filtered.posts.length * 6) +
-      (webResults.length * 3)
-    );
-    const hasAnyRealData = relevantDataCount > 0;
-    const rawResearchScore = Math.round(
-      (analysis.overallSentiment.score * 0.5) +
-      (dataRichness * 0.3) +
-      (Math.min(100, analysis.marketGaps.length * 20) * 0.2)
-    );
-    // If zero real community data found, cap the score — AI-only insights are weak validation
-    const researchScore = hasAnyRealData
-      ? rawResearchScore
-      : Math.min(10, Math.round(rawResearchScore * 0.15));
-
-    // Step 7: Store results
+    // Step 4: Persist to Supabase
     const researchResults = {
-      analysis,
-      hasRealCommunityData: hasAnyRealData,
-      realDataCount: relevantDataCount,
-      sources: {
-        hackerNews: {
-          storiesFound: filtered.stories.length,
-          commentsFound: filtered.comments.length,
-          totalSearched: finalHnData.stories.length + finalHnData.comments.length,
-          topStories: filtered.stories.slice(0, 5).map(s => ({
-            title: s.title,
-            points: s.points,
-            comments: s.numComments,
-            url: s.url,
-          })),
-        },
-        reddit: {
-          postsFound: filtered.posts.length,
-          totalSearched: finalRedditData.length,
-          subredditsSearched: searchPlan.subreddits,
-          hasApiAccess: !!redditToken,
-          topPosts: filtered.posts.slice(0, 5).map(p => ({
-            title: p.title,
-            subreddit: p.subreddit,
-            score: p.score,
-            numComments: p.numComments,
-            permalink: p.permalink,
-          })),
-        },
-        webForums: {
-          resultsFound: webResults.length,
-          topResults: webResults.slice(0, 5).map(w => ({
-            title: w.title,
-            source: w.source,
-            url: w.url,
-          })),
-        },
-        relevanceFilter: {
-          totalFetched: totalDataCount,
-          relevantKept: relevantDataCount,
-          relevanceRatio: Math.round(relevanceRatio * 100),
+      analysis: {
+        frustrationQuotes: report.painPoints.map(p => ({ quote: p, source: 'Research', context: '', frustrationLevel: 'moderate' })),
+        painPointCategories: report.painPoints.map(p => ({ category: p, description: '', frequency: 'common', specificExamples: [], currentWorkarounds: [] })),
+        industryTrends: [],
+        currentSolutionComplaints: report.competitors.map(c => ({ solution: c.name, complaints: [c.gap], userSentiment: 'mixed' })),
+        marketGaps: report.marketGaps.map(g => ({ gap: g, evidence: '', potentialValue: 'high' })),
+        overallSentiment: {
+          score: report.opportunityScore,
+          summary: report.briefSummary,
+          strongestFrustration: report.painPoints[0] || '',
+          biggestOpportunity: report.marketGaps[0] || '',
         },
       },
-      researchScore,
-      researchedAt: new Date().toISOString(),
+      sources: {
+        reddit: { postsFound: redditPosts.length, topPosts: redditPosts.slice(0, 5).map(p => ({ title: p.title, subreddit: p.subreddit, score: p.score, permalink: p.permalink })) },
+        webSearch: { communityResults: communityEvidence.citations.length, competitorResults: competitorEvidence.citations.length, twitterResults: twitterEvidence.citations.length },
+        appStore: { appsFound: competitorApps.length },
+        analogousMarkets: { results: analogousMarketsEvidence.citations.length, markets: plan.analogousMarkets },
+      },
+      researchScore: report.opportunityScore,
+      totalDataPoints: report.totalDataPoints,
+      dataQuality: report.dataQuality,
+      verdict: report.verdict,
+      verdictReason: report.verdictReason,
+      recommendation: report.recommendation,
+      briefSummary: report.briefSummary,
+      fullReport: report.fullReport,
+      competitors: report.competitors,
+      demandSignals: report.demandSignals,
+      risks: report.risks,
+      hasRealCommunityData: report.totalDataPoints > 5,
+      realDataCount: report.totalDataPoints,
+      researchedAt: report.researchedAt,
     };
 
-    // Update the validation workflow
-    const { error: updateError } = await supabaseClient
+    await supabaseClient
       .from('validation_workflows')
       .update({
         reddit_validation_results: researchResults,
         last_signal_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        composite_score: report.opportunityScore,
+        status: report.opportunityScore >= 70 ? 'ready_to_build' : report.opportunityScore >= 40 ? 'needs_focused_tasks' : 'needs_validation',
       })
       .eq('opportunity_id', opportunityId);
 
-    if (updateError) {
-      console.error('Failed to update validation workflow:', updateError);
-    }
-
-    // Store individual Reddit discussions
-    if (filtered.posts.length > 0) {
-      for (const post of filtered.posts.slice(0, 20)) {
-        try {
-          await supabaseClient
-            .from('reddit_discussions')
-            .upsert({
-              opportunity_id: opportunityId,
-              post_id: post.permalink.split('/')[4] || post.permalink,
-              title: post.title,
-              selftext: post.selftext,
-              url: `https://reddit.com${post.permalink}`,
-              author: post.author,
-              subreddit: post.subreddit,
-              score: post.score,
-              num_comments: post.numComments,
-              upvote_ratio: post.upvoteRatio,
-              created_utc: post.createdUtc,
-              permalink: post.permalink,
-              top_comments: post.topComments,
-              engagement_metrics: {
-                score: post.score,
-                num_comments: post.numComments,
-                upvote_ratio: post.upvoteRatio,
-              },
-              relevance_score: Math.min(100, Math.round(post.score / 2 + post.numComments)),
-              pain_points_extracted: analysis.frustrationQuotes
-                .filter(q => q.source.toLowerCase().includes('reddit'))
-                .map(q => q.quote)
-                .slice(0, 5),
-            }, {
-              onConflict: 'post_id,opportunity_id',
-            });
-        } catch (e) {
-          console.error('Reddit discussion insert error:', e);
-        }
-      }
-    }
-
-    console.log(`🎯 Research complete! Score: ${researchScore}/100, Relevance: ${Math.round(relevanceRatio * 100)}%`);
-
     return new Response(JSON.stringify({
       success: true,
-      researchScore,
-      analysis,
+      researchScore: report.opportunityScore,
+      analysis: researchResults.analysis,
       sources: researchResults.sources,
-      totalDataPoints: relevantDataCount,
-      hasRealCommunityData: relevantDataCount > 0,
-      realDataCount: relevantDataCount,
-      diagnostics: {
-        redditAuthAvailable: !!redditToken,
-        rawCounts: {
-          hnStories: uniqueStories.length,
-          hnComments: uniqueComments.length,
-          redditPosts: finalRedditData.length,
-          webResults: webResults.length,
-        },
-        afterFilter: {
-          stories: filtered.stories.length,
-          comments: filtered.comments.length,
-          posts: filtered.posts.length,
-        },
-        searchPlan: {
-          queriesCount: searchPlan.queries.length,
-          subredditsCount: searchPlan.subreddits.length,
-          subreddits: searchPlan.subreddits,
-        },
-      },
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+      totalDataPoints: report.totalDataPoints,
+      hasRealCommunityData: researchResults.hasRealCommunityData,
+      realDataCount: report.totalDataPoints,
+      dataQuality: report.dataQuality,
+      verdict: report.verdict,
+      verdictReason: report.verdictReason,
+      recommendation: report.recommendation,
+      briefSummary: report.briefSummary,
+      fullReport: report.fullReport,
+      demandSignals: report.demandSignals,
+      painPoints: report.painPoints,
+      competitors: report.competitors,
+      marketGaps: report.marketGaps,
+      risks: report.risks,
+      competitorApps: competitorApps.slice(0, 6),
+      analogousMarkets: plan.analogousMarkets,
+      webCitations: [...communityEvidence.citations, ...competitorEvidence.citations, ...analogousMarketsEvidence.citations].slice(0, 12),
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-  } catch (error) {
-    console.error('💥 Research error:', error);
-    return new Response(JSON.stringify({
-      success: false,
-      error: error.message || 'Research failed',
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  } catch (error: any) {
+    console.error('💥 Research engine error:', error);
+    return new Response(JSON.stringify({ success: false, error: error.message || 'Research failed' }), {
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });

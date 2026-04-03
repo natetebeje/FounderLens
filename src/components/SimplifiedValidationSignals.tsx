@@ -11,6 +11,7 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { CommunityResearchResults } from './CommunityResearchResults';
+import { ResearchReport } from './ResearchReport';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 
@@ -95,6 +96,7 @@ export function SimplifiedValidationSignals({
   const [researchData, setResearchData] = useState<any>(null);
   const [discussions, setDiscussions] = useState<any[]>([]);
   const [discussionSummary, setDiscussionSummary] = useState<any>(null);
+  const [researchReportData, setResearchReportData] = useState<any>(null);
   const [aiData, setAiData] = useState<any>(null);
   const [recommendation, setRecommendation] = useState<string | null>(null);
 
@@ -143,6 +145,30 @@ export function SimplifiedValidationSignals({
       const redditResults = workflowRes.data?.reddit_validation_results;
       if (hasData(redditResults) && redditResults.analysis) {
         setResearchData(redditResults);
+        // Restore v2 report data if available
+        if (redditResults.verdict || redditResults.fullReport) {
+          setResearchReportData({
+            opportunityScore: redditResults.researchScore,
+            verdict: redditResults.verdict,
+            verdictReason: redditResults.verdictReason,
+            recommendation: redditResults.recommendation,
+            briefSummary: redditResults.briefSummary,
+            fullReport: redditResults.fullReport,
+            demandSignals: redditResults.demandSignals || [],
+            painPoints: redditResults.painPoints || [],
+            competitors: redditResults.competitors || [],
+            marketGaps: redditResults.marketGaps?.map((g: any) => typeof g === 'string' ? g : g.gap) || [],
+            risks: redditResults.risks || [],
+            competitorApps: redditResults.competitorApps || [],
+            analogousMarkets: redditResults.analogousMarkets || [],
+            webCitations: redditResults.webCitations || [],
+            dataQuality: redditResults.dataQuality,
+            totalDataPoints: redditResults.totalDataPoints,
+            evidenceSources: ['Reddit', 'Web Search', 'App Store', 'AI Research'],
+            analysis: redditResults.analysis,
+            sources: redditResults.sources,
+          });
+        }
       }
       // Also load previously saved Reddit discussions
       if (opportunity?.id) {
@@ -250,14 +276,37 @@ export function SimplifiedValidationSignals({
       if (researchResponse.error) {
         console.error('Research agent error:', researchResponse.error);
       } else if (researchResponse.data?.success) {
+        const rd = researchResponse.data;
         setResearchData({
-          analysis: researchResponse.data.analysis,
-          sources: researchResponse.data.sources,
-          researchScore: researchResponse.data.researchScore,
-          totalDataPoints: researchResponse.data.totalDataPoints,
-          hasRealCommunityData: researchResponse.data.hasRealCommunityData,
-          realDataCount: researchResponse.data.realDataCount,
+          analysis: rd.analysis,
+          sources: rd.sources,
+          researchScore: rd.researchScore,
+          totalDataPoints: rd.totalDataPoints,
+          hasRealCommunityData: rd.hasRealCommunityData,
+          realDataCount: rd.realDataCount,
           researchedAt: new Date().toISOString(),
+        });
+        // Capture rich v2 report data
+        setResearchReportData({
+          opportunityScore: rd.researchScore,
+          verdict: rd.verdict,
+          verdictReason: rd.verdictReason,
+          recommendation: rd.recommendation,
+          briefSummary: rd.briefSummary,
+          fullReport: rd.fullReport,
+          demandSignals: rd.demandSignals || [],
+          painPoints: rd.painPoints || [],
+          competitors: rd.competitors || [],
+          marketGaps: rd.marketGaps || [],
+          risks: rd.risks || [],
+          competitorApps: rd.competitorApps || [],
+          analogousMarkets: rd.analogousMarkets || [],
+          webCitations: rd.webCitations || [],
+          dataQuality: rd.dataQuality,
+          totalDataPoints: rd.totalDataPoints,
+          evidenceSources: ['Reddit', 'Web Search', 'App Store', 'AI Research'],
+          analysis: rd.analysis,
+          sources: rd.sources,
         });
       }
 
@@ -485,7 +534,7 @@ export function SimplifiedValidationSignals({
 
   const hasResults = !!(results && results.composite_score != null && results.composite_score > 0);
   const hasAiData = !!aiData;
-  const hasCommunityData = !!researchData?.analysis || discussions.length > 0 || !!discussionSummary;
+  const hasCommunityData = !!researchData?.analysis || discussions.length > 0 || !!discussionSummary || !!researchReportData;
 
   // Effective scores — use client-side computed score as fallback when DB has 0
   const effectiveAiScore = (results?.ai_score || 0) > 0 ? results.ai_score : (aiData?.confidence_score || 0);
@@ -548,9 +597,9 @@ export function SimplifiedValidationSignals({
             </div>
 
             {/* Community opportunity score — the number that matters most */}
-            {hasCommunityData && (discussionSummary?.opportunityScore ?? 0) > 0 && (
+            {hasCommunityData && ((researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? 0) > 0) && (
               <div className={`flex-shrink-0 flex flex-col items-center justify-center rounded-xl px-4 py-2.5 min-w-[80px] border ${
-                (discussionSummary.opportunityScore ?? 0) >= 70
+                (researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? 0) >= 70
                   ? 'bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-800'
                   : (discussionSummary.opportunityScore ?? 0) >= 40
                     ? 'bg-yellow-50 border-yellow-200 dark:bg-yellow-950/20 dark:border-yellow-800'
@@ -563,7 +612,7 @@ export function SimplifiedValidationSignals({
                       ? 'text-yellow-600 dark:text-yellow-400'
                       : 'text-red-500 dark:text-red-400'
                 }`}>
-                  {discussionSummary.opportunityScore}
+                  {researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore}
                 </span>
                 <span className="text-xs text-muted-foreground mt-1 text-center leading-tight">
                   Opportunity Score
@@ -575,9 +624,9 @@ export function SimplifiedValidationSignals({
                       ? 'text-yellow-600 dark:text-yellow-400'
                       : 'text-red-500 dark:text-red-400'
                 }`}>
-                  {(discussionSummary.opportunityScore ?? 0) >= 70
+                  {(researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? 0) >= 70
                     ? 'Strong Demand'
-                    : (discussionSummary.opportunityScore ?? 0) >= 40
+                    : (researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? 0) >= 40
                       ? 'Moderate Demand'
                       : 'Weak Signal'}
                 </span>
@@ -782,18 +831,43 @@ export function SimplifiedValidationSignals({
 
       {/* ── Community Research (real data from Reddit, HN, forums) ── */}
       {hasCommunityData && (
-        <CommunityResearchResults
-          // New GigaBrain-style fields (from reddit-discussion-extractor)
-          summary={discussionSummary ?? undefined}
-          discussions={discussions}
-          discussionsFound={discussions.length || researchData?.sources?.reddit?.postsFound}
-          // Legacy deep-analysis fields (from validate-opportunity-research)
-          analysis={researchData?.analysis}
-          sources={researchData?.sources}
-          researchScore={researchData?.researchScore}
-          totalDataPoints={researchData?.totalDataPoints}
-          hasRealCommunityData={researchData?.hasRealCommunityData}
-        />
+        researchReportData ? (
+          /* New v2 Research Report — multi-source with web search */
+          <ResearchReport
+            opportunityScore={researchReportData.opportunityScore ?? discussionSummary?.opportunityScore}
+            verdict={researchReportData.verdict}
+            verdictReason={researchReportData.verdictReason}
+            recommendation={researchReportData.recommendation}
+            briefSummary={researchReportData.briefSummary ?? discussionSummary?.tldr}
+            demandSignals={researchReportData.demandSignals?.length > 0 ? researchReportData.demandSignals : (discussionSummary?.demandSignals ?? [])}
+            painPoints={researchReportData.painPoints?.length > 0 ? researchReportData.painPoints : (discussionSummary?.painPoints ?? [])}
+            competitors={researchReportData.competitors ?? []}
+            marketGaps={researchReportData.marketGaps ?? []}
+            risks={researchReportData.risks ?? []}
+            competitorApps={researchReportData.competitorApps ?? []}
+            analogousMarkets={researchReportData.analogousMarkets ?? []}
+            webCitations={[...(researchReportData.webCitations ?? []), ...(discussionSummary?.keyQuotes?.map((q: any) => ({ title: q.text?.slice(0,60), url: q.url })).filter((c: any) => c.url) ?? [])]}
+            dataQuality={researchReportData.dataQuality}
+            totalDataPoints={researchReportData.totalDataPoints ?? researchData?.totalDataPoints}
+            evidenceSources={researchReportData.evidenceSources ?? []}
+            fullReport={researchReportData.fullReport}
+            analysis={researchReportData.analysis ?? researchData?.analysis}
+            sources={researchReportData.sources ?? researchData?.sources}
+            researchScore={researchReportData.opportunityScore}
+          />
+        ) : (
+          /* Legacy CommunityResearchResults for old data */
+          <CommunityResearchResults
+            summary={discussionSummary ?? undefined}
+            discussions={discussions}
+            discussionsFound={discussions.length || researchData?.sources?.reddit?.postsFound}
+            analysis={researchData?.analysis}
+            sources={researchData?.sources}
+            researchScore={researchData?.researchScore}
+            totalDataPoints={researchData?.totalDataPoints}
+            hasRealCommunityData={researchData?.hasRealCommunityData}
+          />
+        )
       )}
 
       {/* ── Build CTA ── */}
