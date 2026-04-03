@@ -142,42 +142,31 @@ export const CommunityResearchResults: React.FC<CommunityResearchResultsProps> =
   return (
     <div className={`space-y-5 ${className}`}>
 
-      {/* ── Score + TLDR header ── */}
-      <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-transparent">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Brain className="w-5 h-5 text-primary" />
-              Community Intelligence
-            </CardTitle>
-            <div className="flex items-center gap-3">
-              <span className={`text-2xl font-bold ${opportunityScoreColor(score)}`}>{score}</span>
-              <div>
-                <div className="text-xs text-muted-foreground">Opportunity Score</div>
-                <Badge variant="outline" className={`text-xs ${opportunityScoreColor(score)}`}>
-                  {opportunityScoreLabel(score)}
-                </Badge>
-              </div>
+      {/* ── TLDR summary — score lives in the parent header card ── */}
+      {tldr && (
+        <Card className="border-border">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <Brain className="w-4 h-4 text-primary flex-shrink-0" />
+              <span className="text-sm font-semibold">Community Intelligence</span>
+              {postCount > 0 && (
+                <span className="ml-auto text-xs text-muted-foreground flex items-center gap-1">
+                  <MessageSquare className="w-3 h-3" /> {postCount} posts
+                  {totalDataPoints ? ` · ${totalDataPoints} data points` : ''}
+                </span>
+              )}
             </div>
-          </div>
-          <Progress value={score} className="h-1.5 mt-2" />
-        </CardHeader>
-
-        {tldr && (
-          <CardContent className="pt-0">
             <p className="text-sm leading-relaxed text-foreground/80 italic border-l-2 border-primary/40 pl-3">
               {tldr}
             </p>
-            <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1"><MessageSquare className="w-3.5 h-3.5" /> {postCount} posts</span>
-              {totalDataPoints && <span className="flex items-center gap-1"><Search className="w-3.5 h-3.5" /> {totalDataPoints} data points</span>}
-              {(hasRealCommunityData === false) && (
-                <Badge variant="outline" className="text-orange-500 border-orange-400 text-xs">AI only — no community data</Badge>
-              )}
-            </div>
+            {(hasRealCommunityData === false) && (
+              <Badge variant="outline" className="text-orange-500 border-orange-400 text-xs mt-3">
+                AI only — no community data
+              </Badge>
+            )}
           </CardContent>
-        )}
-      </Card>
+        </Card>
+      )}
 
       {/* ── Demand signals ── */}
       {demandSignals.length > 0 && (

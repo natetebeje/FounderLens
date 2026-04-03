@@ -531,31 +531,55 @@ export function SimplifiedValidationSignals({
   return (
     <div className="space-y-6">
 
-      {/* ── Header card: title + score + action ── */}
+      {/* ── Header card: title + community opportunity score + action ── */}
       <Card className="border-border">
         <CardContent className="p-5 md:p-6">
 
-          {/* Top row: title left, score right */}
           <div className="flex items-start justify-between gap-4 mb-4">
             <div className="flex-1 min-w-0">
-              <h2 className="text-lg md:text-xl font-bold leading-snug truncate">{opportunity?.title}</h2>
+              <h2 className="text-lg md:text-xl font-bold leading-snug">{opportunity?.title}</h2>
               <p className="text-sm text-muted-foreground mt-0.5">
                 {isRunning
                   ? currentStep
                   : isCompleted
-                    ? 'Validation complete — review findings below'
-                    : 'Run validation to analyse market demand from Reddit and AI'}
+                    ? 'Validation complete — community findings below'
+                    : 'Run validation to find real demand signals from Reddit'}
               </p>
             </div>
 
-            {/* Score pill — only when we have a score */}
-            {(hasResults || (isCompleted && effectiveOverallScore > 0)) && (
-              <div className={`flex-shrink-0 flex flex-col items-center justify-center rounded-xl px-4 py-2 min-w-[72px] border ${getScoreBg(effectiveOverallScore)}`}>
-                <span className={`text-2xl font-bold leading-none ${getScoreColor(effectiveOverallScore)}`}>
-                  {effectiveOverallScore}%
+            {/* Community opportunity score — the number that matters most */}
+            {hasCommunityData && (discussionSummary?.opportunityScore ?? 0) > 0 && (
+              <div className={`flex-shrink-0 flex flex-col items-center justify-center rounded-xl px-4 py-2.5 min-w-[80px] border ${
+                (discussionSummary.opportunityScore ?? 0) >= 70
+                  ? 'bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-800'
+                  : (discussionSummary.opportunityScore ?? 0) >= 40
+                    ? 'bg-yellow-50 border-yellow-200 dark:bg-yellow-950/20 dark:border-yellow-800'
+                    : 'bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800'
+              }`}>
+                <span className={`text-2xl font-bold leading-none ${
+                  (discussionSummary.opportunityScore ?? 0) >= 70
+                    ? 'text-green-600 dark:text-green-400'
+                    : (discussionSummary.opportunityScore ?? 0) >= 40
+                      ? 'text-yellow-600 dark:text-yellow-400'
+                      : 'text-red-500 dark:text-red-400'
+                }`}>
+                  {discussionSummary.opportunityScore}
                 </span>
                 <span className="text-xs text-muted-foreground mt-1 text-center leading-tight">
-                  {getVerdict(effectiveOverallScore)}
+                  Opportunity Score
+                </span>
+                <span className={`text-xs font-semibold mt-0.5 ${
+                  (discussionSummary.opportunityScore ?? 0) >= 70
+                    ? 'text-green-600 dark:text-green-400'
+                    : (discussionSummary.opportunityScore ?? 0) >= 40
+                      ? 'text-yellow-600 dark:text-yellow-400'
+                      : 'text-red-500 dark:text-red-400'
+                }`}>
+                  {(discussionSummary.opportunityScore ?? 0) >= 70
+                    ? 'Strong Demand'
+                    : (discussionSummary.opportunityScore ?? 0) >= 40
+                      ? 'Moderate Demand'
+                      : 'Weak Signal'}
                 </span>
               </div>
             )}
@@ -565,26 +589,6 @@ export function SimplifiedValidationSignals({
           {isRunning && (
             <div className="mb-4">
               <Progress value={progress} className="h-1.5 w-full" />
-            </div>
-          )}
-
-          {/* Score breakdown row — compact, only when complete */}
-          {(hasResults || (isCompleted && effectiveOverallScore > 0)) && (
-            <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-muted/40 border border-border/50">
-              <div className="flex-1 text-center">
-                <div className={`text-base font-semibold ${getScoreColor(effectiveOverallScore)}`}>{effectiveOverallScore}%</div>
-                <div className="text-xs text-muted-foreground">Overall</div>
-              </div>
-              <div className="w-px h-8 bg-border" />
-              <div className="flex-1 text-center">
-                <div className={`text-base font-semibold ${getScoreColor(effectiveAiScore)}`}>{effectiveAiScore}%</div>
-                <div className="text-xs text-muted-foreground">AI Analysis</div>
-              </div>
-              <div className="w-px h-8 bg-border" />
-              <div className="flex-1 text-center">
-                <div className={`text-base font-semibold ${getScoreColor(effectiveCommunityScore)}`}>{effectiveCommunityScore}%</div>
-                <div className="text-xs text-muted-foreground">Community</div>
-              </div>
             </div>
           )}
 
@@ -793,7 +797,7 @@ export function SimplifiedValidationSignals({
       )}
 
       {/* ── Build CTA ── */}
-      {isCompleted && effectiveOverallScore >= 50 && (
+      {isCompleted && hasCommunityData && (discussionSummary?.opportunityScore ?? effectiveOverallScore) >= 50 && (
         <Card className="border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 dark:border-green-800">
           <CardContent className="p-5">
             <div className="flex items-center justify-between gap-4">
@@ -802,7 +806,7 @@ export function SimplifiedValidationSignals({
                 <div>
                   <div className="font-medium text-green-900 dark:text-green-300">Ready to build?</div>
                   <div className="text-sm text-green-700 dark:text-green-400">
-                    Scored {effectiveOverallScore}% — market signal is strong enough to move forward
+                    Scored {discussionSummary?.opportunityScore ?? effectiveOverallScore}/100 — market signal is strong enough to move forward
                   </div>
                 </div>
               </div>
