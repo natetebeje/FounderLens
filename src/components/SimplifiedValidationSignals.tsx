@@ -148,7 +148,7 @@ export function SimplifiedValidationSignals({
         // Restore v2 report data if available
         if (redditResults.verdict || redditResults.fullReport) {
           setResearchReportData({
-            opportunityScore: redditResults.researchScore,
+            opportunityScore: redditResults.researchScore ?? redditResults.opportunityScore,
             verdict: redditResults.verdict,
             verdictReason: redditResults.verdictReason,
             recommendation: redditResults.recommendation,
@@ -288,7 +288,7 @@ export function SimplifiedValidationSignals({
         });
         // Capture rich v2 report data
         setResearchReportData({
-          opportunityScore: rd.researchScore,
+          opportunityScore: rd.researchScore ?? rd.opportunityScore,
           verdict: rd.verdict,
           verdictReason: rd.verdictReason,
           recommendation: rd.recommendation,

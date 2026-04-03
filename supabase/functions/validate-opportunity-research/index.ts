@@ -453,6 +453,57 @@ Each opportunity MUST receive a score reflecting ITS specific evidence. Scores M
     const result = await res.json();
     const report = JSON.parse(result.choices[0].message.content);
 
+    // ── Deterministic score calculation ─────────────────────────────────────
+    // GPT tends to anchor at 65. We compute a formula-based score from the
+    // actual evidence counts and use it to VALIDATE or CORRECT GPT's score.
+    function computeEvidenceScore(): number {
+      let score = 30; // baseline
+
+      // Reddit evidence
+      const redditCount = data.redditPosts.length;
+      if (redditCount === 0) score += 0;
+      else if (redditCount <= 3) score += 5;
+      else if (redditCount <= 10) score += 12;
+      else if (redditCount <= 20) score += 18;
+      else score += 22;
+
+      // Web search quality — community citations about this specific topic
+      const webCits = data.communityEvidence.citations.length + data.twitterEvidence.citations.length;
+      if (webCits === 0) score -= 5;
+      else if (webCits >= 4) score += 10;
+      else score += 5;
+
+      // Competitor apps — presence means validated demand, absence means gap
+      const appCount = data.competitorApps.length;
+      if (appCount === 0) score += 15; // untapped gap
+      else if (appCount <= 3) score += 8;  // some competition, room to differentiate
+      else score += 5; // crowded, need strong differentiation
+
+      // Analogous market citations
+      const analogousCits = data.analogousMarkets.citations.length;
+      if (analogousCits >= 4) score += 15;
+      else if (analogousCits >= 1) score += 8;
+
+      // Competitor evidence (people researching alternatives = validated pain)
+      const compCits = data.competitorEvidence.citations.length;
+      if (compCits >= 3) score += 8;
+      else if (compCits >= 1) score += 4;
+
+      return Math.min(95, Math.max(15, score));
+    }
+
+    const evidenceScore = computeEvidenceScore();
+    const gptScore = Math.min(100, Math.max(0, report.opportunityScore || 0));
+
+    // If GPT score is suspiciously close to 65 (±5), use evidence score instead
+    // Otherwise blend: 60% GPT insight + 40% evidence formula
+    const isGptDefaulting = Math.abs(gptScore - 65) <= 5 && gptScore !== 0;
+    const finalScore = isGptDefaulting
+      ? evidenceScore
+      : Math.round(gptScore * 0.6 + evidenceScore * 0.4);
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     return {
       communityEvidence: data.communityEvidence,
       competitorApps: data.competitorApps,
@@ -467,8 +518,8 @@ Each opportunity MUST receive a score reflecting ITS specific evidence. Scores M
       dataQuality,
       evidenceSources: report.evidenceSources || [],
       totalDataPoints,
-      opportunityScore: Math.min(100, Math.max(0, report.opportunityScore || 0)),
-      verdict: report.verdict || 'insufficient_data',
+      opportunityScore: finalScore,
+      verdict: finalScore >= 70 ? 'strong' : finalScore >= 45 ? 'moderate' : finalScore >= 25 ? 'weak' : 'insufficient_data',
       verdictReason: report.verdictReason || '',
       recommendation: report.recommendation || '',
       briefSummary: report.briefSummary || '',
@@ -614,6 +665,7 @@ serve(async (req: Request) => {
         analogousMarkets: { results: analogousMarketsEvidence.citations.length, markets: plan.analogousMarkets },
       },
       researchScore: report.opportunityScore,
+      opportunityScore: report.opportunityScore,  // stored twice for compatibility
       totalDataPoints: report.totalDataPoints,
       dataQuality: report.dataQuality,
       verdict: report.verdict,
