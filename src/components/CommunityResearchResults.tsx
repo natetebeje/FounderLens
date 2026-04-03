@@ -45,7 +45,7 @@ interface AISummary {
   painPoints?: string[];
   competitorMentions?: string[];
   opportunityScore?: number;
-  keyQuotes?: { text: string; source: string; score?: number }[];
+  keyQuotes?: { text: string; source: string; score?: number; url?: string }[];
 }
 
 // Legacy deep-analysis shape (validate-opportunity-research returns this)
@@ -132,7 +132,7 @@ export const CommunityResearchResults: React.FC<CommunityResearchResultsProps> =
   const demandSignals = summary?.demandSignals ?? [];
   const painPoints = summary?.painPoints ?? analysis?.painPointCategories?.map(p => p.category) ?? [];
   const competitorMentions = summary?.competitorMentions ?? [];
-  const keyQuotes = summary?.keyQuotes ?? analysis?.frustrationQuotes?.slice(0, 4).map(q => ({ text: q.quote, source: q.source, score: 0 })) ?? [];
+  const keyQuotes = summary?.keyQuotes ?? analysis?.frustrationQuotes?.slice(0, 4).map(q => ({ text: q.quote, source: q.source, score: 0, url: undefined })) ?? [];
   const redditPosts: RedditPost[] = discussions.length > 0 ? discussions : (sources?.reddit?.topPosts ?? []);
   const postCount = discussionsFound ?? sources?.reddit?.postsFound ?? redditPosts.length;
   const deepAnalysis = analysis;
@@ -253,18 +253,35 @@ export const CommunityResearchResults: React.FC<CommunityResearchResultsProps> =
           <CardContent className="pt-0 space-y-3">
             {keyQuotes.map((q, i) => {
               const level = (q as any).frustrationLevel ?? 'moderate';
+              const hasLink = !!q.url;
+              const Wrapper = hasLink ? 'a' : 'div';
               return (
-                <div key={i} className={`border-l-4 pl-3 py-1 rounded-r text-sm ${frustrationColor(level)}`}>
+                <Wrapper
+                  key={i}
+                  {...(hasLink ? {
+                    href: q.url,
+                    target: '_blank',
+                    rel: 'noopener noreferrer',
+                    className: `block border-l-4 pl-3 py-2 rounded-r text-sm ${frustrationColor(level)} group transition-opacity hover:opacity-90`,
+                  } : {
+                    className: `border-l-4 pl-3 py-2 rounded-r text-sm ${frustrationColor(level)}`,
+                  })}
+                >
                   <p className="italic text-foreground/80">"{q.text}"</p>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                     <span className="text-xs text-muted-foreground">{q.source}</span>
                     {(q.score ?? 0) > 0 && (
                       <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
                         <ThumbsUp className="w-3 h-3" /> {q.score}
                       </span>
                     )}
+                    {hasLink && (
+                      <span className="flex items-center gap-0.5 text-xs text-muted-foreground ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                        <ExternalLink className="w-3 h-3" /> View on Reddit
+                      </span>
+                    )}
                   </div>
-                </div>
+                </Wrapper>
               );
             })}
           </CardContent>

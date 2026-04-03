@@ -403,7 +403,7 @@ async function summarizeForFounderLens(
   painPoints: string[];
   competitorMentions: string[];
   opportunityScore: number;
-  keyQuotes: { text: string; source: string; score: number }[];
+  keyQuotes: { text: string; source: string; score: number; url?: string }[];
 }> {
   if (posts.length === 0) {
     return {
@@ -418,7 +418,7 @@ async function summarizeForFounderLens(
 
   const context = posts.slice(0, 10).map((p, i) => {
     const comments = p.top_comments.slice(0, 3).map(c => `  - "${c.body.slice(0, 200)}" (${c.score} pts)`).join('\n');
-    return `[Post ${i + 1}] r/${p.subreddit} | ${p.score} upvotes | "${p.title}"\n${p.selftext ? p.selftext.slice(0, 300) : '(no body)'}${comments ? '\nTop comments:\n' + comments : ''}`;
+    return `[Post ${i + 1}] r/${p.subreddit} | ${p.score} upvotes | URL: ${p.permalink} | "${p.title}"\n${p.selftext ? p.selftext.slice(0, 300) : '(no body)'}${comments ? '\nTop comments:\n' + comments : ''}`;
   }).join('\n\n---\n\n');
 
   try {
@@ -454,12 +454,12 @@ Return JSON with this exact structure:
   "competitorMentions": ["up to 5 existing products/tools mentioned as alternatives or complaints"],
   "opportunityScore": 0,
   "keyQuotes": [
-    { "text": "exact or paraphrased quote from a Reddit comment", "source": "r/subreddit", "score": 0 }
+    { "text": "exact or paraphrased quote from a Reddit comment or post title", "source": "r/subreddit", "score": 0, "url": "https://reddit.com/r/subreddit/comments/postid/" }
   ]
 }
 
 opportunityScore: 0-100. Base it on: volume of relevant discussions, intensity of pain expressed, demand signals found, and competitor gaps. 0 = no validation evidence, 100 = overwhelming community demand.
-keyQuotes: up to 4 most impactful quotes. score = the post's Reddit upvote score.`,
+keyQuotes: up to 4 most impactful quotes. score = the post's Reddit upvote score. url = the exact Reddit permalink shown in the [Post N] URL field above — copy the real URL, do not invent one.`,
           },
         ],
       }),
@@ -485,7 +485,7 @@ keyQuotes: up to 4 most impactful quotes. score = the post's Reddit upvote score
       painPoints: [],
       competitorMentions: [],
       opportunityScore: Math.min(50, posts.length * 5),
-      keyQuotes: posts.slice(0, 3).map(p => ({ text: p.title, source: `r/${p.subreddit}`, score: p.score })),
+      keyQuotes: posts.slice(0, 3).map(p => ({ text: p.title, source: `r/${p.subreddit}`, score: p.score, url: p.permalink })),
     };
   }
 }
