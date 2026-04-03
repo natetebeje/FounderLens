@@ -679,6 +679,31 @@ serve(async (req: Request) => {
       hasRealCommunityData: report.totalDataPoints > 5,
       realDataCount: report.totalDataPoints,
       researchedAt: report.researchedAt,
+      // ── Persistence fix: fields needed to restore full report on reload ──
+      painPoints: report.painPoints,
+      competitorApps: competitorApps.slice(0, 8),
+      analogousMarkets: plan.analogousMarkets,   // string[] — market names
+      marketGaps: report.marketGaps,             // string[] — flat gap strings
+      evidenceSources: report.evidenceSources,
+      webCitations: [
+        ...communityEvidence.citations,
+        ...competitorEvidence.citations,
+        ...twitterEvidence.citations,
+        ...analogousMarketsEvidence.citations,
+      ]
+        .map(c => {
+          let url = c.url || '';
+          try {
+            const u = new URL(url);
+            u.searchParams.delete('utm_source');
+            u.searchParams.delete('utm_medium');
+            u.searchParams.delete('utm_campaign');
+            url = u.toString();
+          } catch { /* keep original */ }
+          return { title: c.title, url };
+        })
+        .filter((c, i, arr) => c.url && arr.findIndex(x => x.url === c.url) === i)
+        .slice(0, 15),
     };
 
     await supabaseClient
