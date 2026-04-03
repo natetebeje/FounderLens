@@ -247,14 +247,19 @@ function stripHtml(html: string): string {
 
 // ============================================================================
 // STEP 3: SEARCH REDDIT
+// Uses OAuth when REDDIT_CLIENT_ID/SECRET are set; falls back to PullPush.io
+// which bypasses Reddit's 403 datacenter IP blocks (GigaBrain strategy).
 // ============================================================================
+
+let _cachedRedditToken: { token: string; expiresAt: number } | null = null;
 
 async function getRedditToken(): Promise<string | null> {
   const clientId = Deno.env.get('REDDIT_CLIENT_ID');
   const clientSecret = Deno.env.get('REDDIT_CLIENT_SECRET');
-  if (!clientId || !clientSecret) {
-    console.warn('⚠️ Reddit API credentials not configured — will use public fallback');
-    return null;
+  if (!clientId || !clientSecret) return null;
+
+  if (_cachedRedditToken && Date.now() < _cachedRedditToken.expiresAt - 60_000) {
+    return _cachedRedditToken.token;
   }
 
   try {
@@ -263,89 +268,90 @@ async function getRedditToken(): Promise<string | null> {
       headers: {
         'Authorization': `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'FounderLens/1.0',
+        'User-Agent': 'FounderLens/1.0 (by /u/founderlens_app)',
       },
       body: 'grant_type=client_credentials',
     });
     if (response.ok) {
       const data = await response.json();
-      return data.access_token;
+      _cachedRedditToken = { token: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+      console.log('✅ Reddit OAuth token obtained');
+      return _cachedRedditToken.token;
     }
-    console.warn(`⚠️ Reddit OAuth failed with status ${response.status} — will use public fallback`);
+    console.warn(`⚠️ Reddit OAuth failed (${response.status}) — falling back to PullPush`);
   } catch (error) {
-    console.error('Reddit auth failed:', error);
+    console.error('Reddit auth error:', error);
   }
   return null;
 }
 
 async function searchReddit(
-  token: string,
+  token: string | null,
   queries: string[],
   subreddits: string[],
   limit: number = 30
 ): Promise<RedditPost[]> {
+  if (token) {
+    console.log('🔐 Using Reddit OAuth API');
+    return _searchRedditOAuth(token, queries, subreddits, limit);
+  }
+  console.log('🔄 Using PullPush fallback (bypasses Reddit datacenter blocks)');
+  return _searchPullPush(queries, limit);
+}
+
+async function _searchRedditOAuth(
+  token: string,
+  queries: string[],
+  subreddits: string[],
+  limit: number
+): Promise<RedditPost[]> {
   const allPosts: RedditPost[] = [];
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    'User-Agent': 'FounderLens/1.0 (by /u/founderlens_app)',
+  };
 
   for (const subreddit of subreddits.slice(0, 8)) {
     for (const query of queries.slice(0, 4)) {
       try {
-        const url = `https://oauth.reddit.com/r/${subreddit}/search?q=${encodeURIComponent(query)}&sort=relevance&t=all&limit=10&restrict_sr=on`;
-        const response = await fetch(url, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'User-Agent': 'FounderLens/1.0',
-          },
-        });
+        const url = `https://oauth.reddit.com/r/${subreddit}/search?q=${encodeURIComponent(query)}&sort=relevance&t=year&limit=10&restrict_sr=on`;
+        const response = await fetch(url, { headers });
+        if (!response.ok) continue;
 
-        if (response.ok) {
-          const data = await response.json();
-          for (const child of data?.data?.children || []) {
-            const post = child.data;
-            if (post.score < 2) continue;
+        const data = await response.json();
+        for (const child of data?.data?.children || []) {
+          const post = child.data;
+          if (!post || post.score < 2) continue;
 
-            let topComments: { body: string; author: string; score: number }[] = [];
-            try {
-              const commentsUrl = `https://oauth.reddit.com/r/${subreddit}/comments/${post.id}?sort=top&limit=8`;
-              const commentsResponse = await fetch(commentsUrl, {
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'User-Agent': 'FounderLens/1.0',
-                },
-              });
-              if (commentsResponse.ok) {
-                const commentsData = await commentsResponse.json();
-                const commentChildren = commentsData?.[1]?.data?.children || [];
-                topComments = commentChildren
-                  .filter((c: any) => c.data?.body && c.data.body !== '[deleted]' && c.data.body.length > 20)
-                  .slice(0, 6)
-                  .map((c: any) => ({
-                    body: c.data.body.substring(0, 500),
-                    author: c.data.author || 'anonymous',
-                    score: c.data.score || 0,
-                  }));
-              }
-            } catch (e) {
-              // Comment fetch failed - continue
+          let topComments: { body: string; author: string; score: number }[] = [];
+          try {
+            const commentsUrl = `https://oauth.reddit.com/r/${subreddit}/comments/${post.id}?sort=top&limit=6`;
+            const commentsResponse = await fetch(commentsUrl, { headers });
+            if (commentsResponse.ok) {
+              const commentsData = await commentsResponse.json();
+              topComments = (commentsData?.[1]?.data?.children || [])
+                .filter((c: any) => c.data?.body && c.data.body !== '[deleted]' && c.data.body.length > 20)
+                .slice(0, 6)
+                .map((c: any) => ({ body: c.data.body.substring(0, 500), author: c.data.author || '', score: c.data.score || 0 }));
             }
+          } catch (e) { /* ignore */ }
 
-            allPosts.push({
-              title: post.title || '',
-              selftext: (post.selftext || '').substring(0, 1000),
-              author: post.author || '',
-              subreddit: post.subreddit || subreddit,
-              score: post.score || 0,
-              numComments: post.num_comments || 0,
-              permalink: post.permalink || '',
-              createdUtc: post.created_utc || 0,
-              upvoteRatio: post.upvote_ratio || 0,
-              topComments,
-            });
-          }
+          allPosts.push({
+            title: post.title || '',
+            selftext: (post.selftext || '').substring(0, 1000),
+            author: post.author || '',
+            subreddit: post.subreddit || subreddit,
+            score: post.score || 0,
+            numComments: post.num_comments || 0,
+            permalink: `https://reddit.com${post.permalink || ''}`,
+            createdUtc: post.created_utc || 0,
+            upvoteRatio: post.upvote_ratio || 0,
+            topComments,
+          });
         }
-
         await new Promise(r => setTimeout(r, 300));
       } catch (error) {
-        console.error(`Reddit search failed for r/${subreddit} "${query}":`, error);
+        console.error(`OAuth search error r/${subreddit}:`, error);
       }
     }
   }
@@ -354,92 +360,85 @@ async function searchReddit(
   return unique.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-// Public Reddit fallback — no OAuth required, uses public JSON endpoints
+// PullPush.io — community Pushshift mirror, works from Deno/cloud environments
+// This is the GigaBrain-proven strategy for bypassing Reddit's datacenter IP blocks.
+async function _searchPullPush(queries: string[], limit: number): Promise<RedditPost[]> {
+  const allPosts: RedditPost[] = [];
+  console.log('📡 PullPush search with', queries.length, 'queries');
+
+  for (const query of queries.slice(0, 7)) {
+    try {
+      const url = new URL('https://api.pullpush.io/reddit/search/submission/');
+      url.searchParams.set('q', query);
+      url.searchParams.set('size', '15');
+      url.searchParams.set('score', '>1');
+
+      const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
+      if (!res.ok) {
+        console.warn(`PullPush ${res.status} for "${query}"`);
+        continue;
+      }
+
+      const data = await res.json();
+      for (const p of data?.data ?? []) {
+        if (!p.title) continue;
+        allPosts.push({
+          title: p.title,
+          selftext: (p.selftext ?? '').substring(0, 1000),
+          author: p.author ?? '[deleted]',
+          subreddit: p.subreddit ?? 'unknown',
+          score: p.score ?? 0,
+          numComments: p.num_comments ?? 0,
+          permalink: p.permalink ? `https://reddit.com${p.permalink}` : `https://reddit.com/r/${p.subreddit}/comments/${p.id}/`,
+          createdUtc: p.created_utc ?? 0,
+          upvoteRatio: p.upvote_ratio ?? 0,
+          topComments: [],
+        });
+      }
+      await new Promise(r => setTimeout(r, 400));
+    } catch (e) {
+      console.error(`PullPush error for "${query}":`, e);
+    }
+  }
+
+  // Fetch comments for top posts
+  const unique = Array.from(new Map(allPosts.map(p => [p.permalink, p])).values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+
+  for (const post of unique.slice(0, 8)) {
+    try {
+      const postId = post.permalink.split('/')[6] ?? post.permalink.split('/').pop();
+      if (!postId) continue;
+      const cUrl = new URL('https://api.pullpush.io/reddit/search/comment/');
+      cUrl.searchParams.set('link_id', `t3_${postId}`);
+      cUrl.searchParams.set('size', '6');
+      cUrl.searchParams.set('score', '>1');
+      const cRes = await fetch(cUrl.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
+      if (cRes.ok) {
+        const cData = await cRes.json();
+        post.topComments = (cData?.data ?? [])
+          .filter((c: any) => c.body && c.body !== '[deleted]' && c.body !== '[removed]')
+          .slice(0, 6)
+          .map((c: any) => ({ body: c.body.substring(0, 500), author: c.author ?? '', score: c.score ?? 0 }));
+      }
+      await new Promise(r => setTimeout(r, 300));
+    } catch (e) { /* ignore */ }
+  }
+
+  console.log(`📬 PullPush returned ${unique.length} posts`);
+  return unique;
+}
+
+// Legacy wrapper — called from serve() which previously passed a token separately
 async function searchRedditPublic(
   queries: string[],
   subreddits: string[],
   limit: number = 25
 ): Promise<RedditPost[]> {
-  const allPosts: RedditPost[] = [];
-  console.log('🔄 Using Reddit public JSON fallback (no OAuth)');
-
-  // Use a browser-like User-Agent — Reddit blocks custom/bot user agents on public endpoints
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json',
-  };
-
-  async function fetchRedditJson(url: string, label: string): Promise<any> {
-    try {
-      const response = await fetch(url, { headers });
-      if (response.ok) {
-        const text = await response.text();
-        try {
-          return JSON.parse(text);
-        } catch {
-          console.warn(`⚠️ Reddit returned non-JSON for ${label} (likely HTML/captcha page, ${text.length} bytes)`);
-          return null;
-        }
-      } else {
-        console.warn(`⚠️ Reddit returned ${response.status} for ${label}`);
-        // If rate limited, wait longer before next request
-        if (response.status === 429) {
-          await new Promise(r => setTimeout(r, 3000));
-        }
-        return null;
-      }
-    } catch (error) {
-      console.error(`Reddit fetch failed for ${label}:`, error);
-      return null;
-    }
-  }
-
-  function extractPosts(data: any, fallbackSubreddit?: string): void {
-    for (const child of data?.data?.children || []) {
-      const post = child.data;
-      if (!post || post.score < 2) continue;
-      allPosts.push({
-        title: post.title || '',
-        selftext: (post.selftext || '').substring(0, 1000),
-        author: post.author || '',
-        subreddit: post.subreddit || fallbackSubreddit || '',
-        score: post.score || 0,
-        numComments: post.num_comments || 0,
-        permalink: post.permalink || '',
-        createdUtc: post.created_utc || 0,
-        upvoteRatio: post.upvote_ratio || 0,
-        topComments: [],
-      });
-    }
-  }
-
-  // Search globally with each query
-  for (const query of queries.slice(0, 5)) {
-    const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=relevance&t=all&limit=15`;
-    const data = await fetchRedditJson(url, `global search "${query}"`);
-    if (data) {
-      extractPosts(data);
-    }
-    await new Promise(r => setTimeout(r, 1500));
-  }
-
-  // Also search within specific subreddits (top 4)
-  for (const subreddit of subreddits.slice(0, 4)) {
-    const query = queries[0] || '';
-    const url = `https://www.reddit.com/r/${subreddit}/search.json?q=${encodeURIComponent(query)}&sort=relevance&t=all&limit=10&restrict_sr=on`;
-    const data = await fetchRedditJson(url, `r/${subreddit} "${query}"`);
-    if (data) {
-      extractPosts(data, subreddit);
-    }
-    await new Promise(r => setTimeout(r, 1500));
-  }
-
-  const unique = Array.from(new Map(allPosts.map(p => [p.permalink, p])).values());
-  console.log(`📬 Reddit public fallback found ${unique.length} posts`);
-  return unique.sort((a, b) => b.score - a.score).slice(0, limit);
+  return _searchPullPush(queries, limit);
 }
 
-// ============================================================================
 // STEP 3b: WEB FORUM SEARCH (Quora, forums, blogs via DuckDuckGo)
 // Diversifies sources beyond just HN and Reddit
 // ============================================================================
@@ -963,9 +962,7 @@ serve(async (req: Request) => {
 
     const [hnData, redditData, webResults, multilingualData] = await Promise.all([
       searchHackerNews(searchPlan.hnQueries, 30),
-      redditToken
-        ? searchReddit(redditToken, searchPlan.queries, searchPlan.subreddits, 30)
-        : searchRedditPublic(searchPlan.queries, searchPlan.subreddits, 25),
+      searchReddit(redditToken, searchPlan.queries, searchPlan.subreddits, 30),
       searchWebForums(searchPlan.webQueries, 15),
       searchMultilingual(searchPlan.localLanguageQueries, apiKey),
     ]);
@@ -976,9 +973,7 @@ serve(async (req: Request) => {
       console.warn('⚠️ Reddit returned 0 results from planned queries — trying direct title search fallback');
       const titleWords = title.replace(/[^a-z0-9\s]/gi, '').trim();
       const fallbackQueries = [titleWords, ...titleWords.split(/\s+/).filter((w: string) => w.length > 4).slice(0, 2)];
-      const fallbackReddit = redditToken
-        ? await searchReddit(redditToken, fallbackQueries, searchPlan.subreddits.slice(0, 3), 15)
-        : await searchRedditPublic(fallbackQueries, searchPlan.subreddits.slice(0, 3), 15);
+      const fallbackReddit = await searchReddit(redditToken, fallbackQueries, searchPlan.subreddits.slice(0, 3), 15);
       if (fallbackReddit.length > 0) {
         console.log(`✅ Reddit fallback search found ${fallbackReddit.length} posts`);
         finalRedditData = fallbackReddit;

@@ -1,221 +1,151 @@
-import "https://deno.land/x/xhr@0.1.0/mod.ts";
+/**
+ * FounderLens × GigaBrain — Reddit connectivity test endpoint
+ * GET /reddit-test?opportunityId=<id>  OR  POST with { query, opportunityId }
+ * Tests that PullPush / Reddit OAuth search is working correctly.
+ */
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  let query = "best project management tool alternatives";
+  let opportunityId: string | null = null;
 
   try {
-    const redditClientId = Deno.env.get('REDDIT_CLIENT_ID');
-    const redditClientSecret = Deno.env.get('REDDIT_CLIENT_SECRET');
-    
-    console.log('🔧 Testing Reddit API connectivity...');
-    
-    // Test 1: API Credentials Validation
-    const testsResult = {
-      credentialsPresent: !!(redditClientId && redditClientSecret),
-      authenticationWorks: false,
-      subredditAccess: false,
-      searchFunctionality: false,
-      connectionStatus: 'failed'
+    if (req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      if (body.query) query = body.query;
+      if (body.opportunityId) opportunityId = body.opportunityId;
+    } else {
+      const url = new URL(req.url);
+      if (url.searchParams.get("query")) query = url.searchParams.get("query")!;
+      if (url.searchParams.get("opportunityId")) opportunityId = url.searchParams.get("opportunityId");
+    }
+
+    // If opportunityId given, fetch opportunity title as the query
+    if (opportunityId) {
+      const supabase = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      );
+      const { data } = await supabase
+        .from("business_opportunities")
+        .select("title, target_market")
+        .eq("id", opportunityId)
+        .maybeSingle();
+      if (data) query = data.title;
+    }
+
+    const diagnostics: Record<string, any> = {
+      query,
+      timestamp: new Date().toISOString(),
+      env: {
+        hasOpenAIKey: !!Deno.env.get("OPENAI_API_KEY"),
+        hasRedditClientId: !!Deno.env.get("REDDIT_CLIENT_ID"),
+        hasRedditClientSecret: !!Deno.env.get("REDDIT_CLIENT_SECRET"),
+      },
     };
 
-    if (!redditClientId || !redditClientSecret) {
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: 'Reddit API credentials are not set. Please configure REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in Supabase secrets.',
-          tests: testsResult,
-          recommendations: [
-            'Set REDDIT_CLIENT_ID in Supabase Edge Function secrets',
-            'Set REDDIT_CLIENT_SECRET in Supabase Edge Function secrets',
-            'Get credentials from https://www.reddit.com/prefs/apps'
-          ]
-        }),
-        { 
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
-      );
-    }
-
-    console.log('✅ Reddit credentials present');
-
-    // Test 2: Authentication - Get Access Token
-    const auth = btoa(`${redditClientId}:${redditClientSecret}`);
-    
-    const authResponse = await fetch('https://www.reddit.com/api/v1/access_token', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'FounderLens/1.0 by automated-bot'
-      },
-      body: 'grant_type=client_credentials'
-    });
-
-    testsResult.authenticationWorks = authResponse.ok;
-    testsResult.connectionStatus = authResponse.ok ? 'connected' : 'failed';
-
-    if (!authResponse.ok) {
-      const errorText = await authResponse.text();
-      console.error('❌ Reddit authentication failed:', errorText);
-      
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: `Reddit authentication failed: ${authResponse.status} - ${authResponse.statusText}`,
-          errorDetail: errorText,
-          tests: testsResult,
-          recommendations: [
-            'Verify Reddit API credentials are correct',
-            'Ensure Reddit app has proper permissions',
-            'Check if Reddit app is not suspended',
-            'Visit https://www.reddit.com/prefs/apps to verify app status'
-          ]
-        }),
-        { 
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
-      );
-    }
-
-    const authData = await authResponse.json();
-    const accessToken = authData.access_token;
-    console.log('✅ Reddit authentication successful');
-
-    // Test 3: Subreddit Access - Test key subreddits
-    const testSubreddits = ['startups', 'entrepreneur', 'business'];
-    const accessibleSubreddits = [];
-    
-    for (const subreddit of testSubreddits) {
-      try {
-        const subredditResponse = await fetch(`https://oauth.reddit.com/r/${subreddit}/about`, {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'User-Agent': 'FounderLens/1.0 by automated-bot'
-          }
-        });
-
-        if (subredditResponse.ok) {
-          accessibleSubreddits.push(subreddit);
-        }
-      } catch (error) {
-        console.warn(`⚠️ Could not access r/${subreddit}:`, error);
-      }
-    }
-
-    testsResult.subredditAccess = accessibleSubreddits.length > 0;
-    console.log(`✅ Accessible subreddits: ${accessibleSubreddits.join(', ')}`);
-
-    // Test 4: Search Functionality
-    let searchResults = 0;
+    // Test 1: PullPush (always works, no credentials needed)
+    const pullPushStart = Date.now();
     try {
-      const searchResponse = await fetch('https://oauth.reddit.com/r/startups/search?q=business%20problem&sort=relevance&t=week&limit=5&restrict_sr=true', {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'User-Agent': 'FounderLens/1.0 by automated-bot'
-        }
-      });
+      const url = new URL("https://api.pullpush.io/reddit/search/submission/");
+      url.searchParams.set("q", query);
+      url.searchParams.set("size", "5");
+      url.searchParams.set("score", ">1");
 
-      if (searchResponse.ok) {
-        const searchData = await searchResponse.json();
-        searchResults = searchData.data?.children?.length || 0;
-        testsResult.searchFunctionality = searchResults > 0;
-        console.log(`✅ Search test returned ${searchResults} results`);
-      }
-    } catch (error) {
-      console.warn('⚠️ Search functionality test failed:', error);
+      const res = await fetch(url.toString(), { headers: { "User-Agent": "FounderLens/1.0" } });
+      const data = await res.json();
+      const posts = data?.data ?? [];
+
+      diagnostics.pullpush = {
+        status: res.status,
+        ok: res.ok,
+        postsFound: posts.length,
+        latencyMs: Date.now() - pullPushStart,
+        sampleTitles: posts.slice(0, 3).map((p: any) => `[r/${p.subreddit}] ${p.title?.slice(0, 60)}`),
+      };
+    } catch (e) {
+      diagnostics.pullpush = { error: String(e), latencyMs: Date.now() - pullPushStart };
     }
 
-    // Test 5: Rate Limiting Check
-    const rateLimitStatus = authResponse.headers.get('x-ratelimit-remaining');
-    const rateLimitReset = authResponse.headers.get('x-ratelimit-reset');
-
-    return new Response(
-      JSON.stringify({ 
-        success: true,
-        message: 'Reddit API connectivity test completed',
-        tests: testsResult,
-        subredditAccess: {
-          accessible: accessibleSubreddits,
-          searchResults: searchResults
-        },
-        rateLimiting: {
-          remaining: rateLimitStatus,
-          resetTime: rateLimitReset
-        },
-        costComparison: {
-          reddit: 'FREE (Rate limited)',
-          browseAi: '670 credits (~$33-67 per validation)'
-        },
-        recommendations: generateRecommendations(testsResult, accessibleSubreddits.length, searchResults)
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-
-  } catch (error) {
-    console.error('Reddit API test failed:', error);
-    console.error('Error stack:', error.stack);
-    
-    return new Response(
-      JSON.stringify({ 
-        success: false, 
-        error: error.message,
-        errorDetail: error.stack,
-        errorType: error.constructor.name,
-        tests: {
-          credentialsPresent: !!(Deno.env.get('REDDIT_CLIENT_ID') && Deno.env.get('REDDIT_CLIENT_SECRET')),
-          authenticationWorks: false,
-          subredditAccess: false,
-          searchFunctionality: false,
-          connectionStatus: 'error'
-        },
-        recommendations: [
-          'Check the function logs for detailed error information',
-          'Verify Reddit API credentials are correctly set in Supabase secrets',
-          'Ensure Reddit app has proper permissions and is not suspended',
-          'Contact support if the error persists'
-        ]
-      }),
-      { 
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+    // Test 2: Reddit OAuth (only if credentials are set)
+    if (Deno.env.get("REDDIT_CLIENT_ID") && Deno.env.get("REDDIT_CLIENT_SECRET")) {
+      const oauthStart = Date.now();
+      try {
+        const clientId = Deno.env.get("REDDIT_CLIENT_ID")!;
+        const clientSecret = Deno.env.get("REDDIT_CLIENT_SECRET")!;
+        const tokenRes = await fetch("https://www.reddit.com/api/v1/access_token", {
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "FounderLens/1.0",
+          },
+          body: "grant_type=client_credentials",
+        });
+        const tokenData = await tokenRes.json();
+        diagnostics.redditOAuth = {
+          tokenStatus: tokenRes.status,
+          tokenOk: tokenRes.ok,
+          hasToken: !!tokenData.access_token,
+          latencyMs: Date.now() - oauthStart,
+        };
+      } catch (e) {
+        diagnostics.redditOAuth = { error: String(e), latencyMs: Date.now() - oauthStart };
       }
-    );
+    } else {
+      diagnostics.redditOAuth = { skipped: true, reason: "REDDIT_CLIENT_ID/SECRET not set — PullPush will be used" };
+    }
+
+    // Test 3: OpenAI (if key is set)
+    if (Deno.env.get("OPENAI_API_KEY")) {
+      const aiStart = Date.now();
+      try {
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("OPENAI_API_KEY")}`,
+          },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            messages: [{ role: "user", content: "Reply with just: {\"ok\": true}" }],
+            max_tokens: 20,
+            response_format: { type: "json_object" },
+          }),
+        });
+        diagnostics.openai = {
+          status: res.status,
+          ok: res.ok,
+          latencyMs: Date.now() - aiStart,
+        };
+      } catch (e) {
+        diagnostics.openai = { error: String(e), latencyMs: Date.now() - aiStart };
+      }
+    } else {
+      diagnostics.openai = { skipped: true, reason: "OPENAI_API_KEY not set" };
+    }
+
+    const allGood = diagnostics.pullpush?.ok && !diagnostics.pullpush?.error;
+    return new Response(JSON.stringify({
+      success: allGood,
+      message: allGood
+        ? `✅ Reddit search working — ${diagnostics.pullpush?.postsFound ?? 0} posts found via PullPush`
+        : "⚠️ Reddit search may have issues — check diagnostics",
+      diagnostics,
+    }, null, 2), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+  } catch (err) {
+    return new Response(JSON.stringify({ success: false, error: String(err) }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
-
-function generateRecommendations(tests: any, subredditCount: number, searchResults: number) {
-  const recommendations = [];
-  
-  if (!tests.authenticationWorks) {
-    recommendations.push('Fix Reddit authentication - verify API credentials are correct');
-  }
-  
-  if (!tests.subredditAccess || subredditCount === 0) {
-    recommendations.push('Cannot access target subreddits - check app permissions');
-  }
-  
-  if (!tests.searchFunctionality || searchResults === 0) {
-    recommendations.push('Search functionality not working - verify API access scope');
-  }
-  
-  if (tests.authenticationWorks && tests.subredditAccess && tests.searchFunctionality) {
-    recommendations.push('All tests passed! Reddit integration ready for cost-effective market validation');
-    recommendations.push('Reddit API provides FREE validation vs Browse.ai\'s 670 credit cost');
-  }
-  
-  recommendations.push('Visit https://www.reddit.com/prefs/apps to manage your Reddit application');
-  
-  return recommendations;
-}
-
-console.log("Listening on http://localhost:9999/");

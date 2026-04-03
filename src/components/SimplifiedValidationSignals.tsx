@@ -34,6 +34,8 @@ export function SimplifiedValidationSignals({
   const [currentStep, setCurrentStep] = useState('');
   const [results, setResults] = useState<any>(initialResults || null);
   const [researchData, setResearchData] = useState<any>(null);
+  const [discussions, setDiscussions] = useState<any[]>([]);
+  const [discussionSummary, setDiscussionSummary] = useState<any>(null);
   const [aiData, setAiData] = useState<any>(null);
   const [recommendation, setRecommendation] = useState<string | null>(null);
 
@@ -82,6 +84,16 @@ export function SimplifiedValidationSignals({
       const redditResults = workflowRes.data?.reddit_validation_results;
       if (hasData(redditResults) && redditResults.analysis) {
         setResearchData(redditResults);
+      }
+      // Also load previously saved Reddit discussions
+      if (opportunity?.id) {
+        supabase
+          .from('reddit_discussions')
+          .select('post_id,title,subreddit,score,num_comments,author,permalink,relevance_score,engagement_metrics,pain_points_extracted')
+          .eq('opportunity_id', opportunity.id)
+          .order('score', { ascending: false })
+          .limit(20)
+          .then(({ data }) => { if (data?.length) setDiscussions(data); });
       }
       if (workflowRes.data?.automated_recommendation) {
         setRecommendation(workflowRes.data.automated_recommendation);
@@ -178,8 +190,33 @@ export function SimplifiedValidationSignals({
           sources: researchResponse.data.sources,
           researchScore: researchResponse.data.researchScore,
           totalDataPoints: researchResponse.data.totalDataPoints,
+          hasRealCommunityData: researchResponse.data.hasRealCommunityData,
+          realDataCount: researchResponse.data.realDataCount,
           researchedAt: new Date().toISOString(),
         });
+      }
+
+      // Also run reddit-discussion-extractor for direct Reddit posts + AI TLDR
+      setCurrentStep('Extracting Reddit discussions...');
+      setProgress(65);
+      try {
+        const extractResponse = await supabase.functions.invoke('reddit-discussion-extractor', {
+          body: {
+            opportunityId: opportunity.id,
+            queries: [
+              opportunity.title,
+              `${opportunity.target_market} problem`,
+              `${opportunity.title} alternative`,
+              ...(opportunity.opportunity_tags || []).slice(0, 3),
+            ],
+          }
+        });
+        if (extractResponse.data?.success) {
+          if (extractResponse.data.discussions?.length) setDiscussions(extractResponse.data.discussions);
+          if (extractResponse.data.summary) setDiscussionSummary(extractResponse.data.summary);
+        }
+      } catch (e) {
+        console.warn('Discussion extractor error:', e);
       }
 
       setCurrentStep('Calculating validation score...');
@@ -383,7 +420,7 @@ export function SimplifiedValidationSignals({
 
   const hasResults = !!(results && results.composite_score != null && results.composite_score > 0);
   const hasAiData = !!aiData;
-  const hasCommunityData = !!researchData?.analysis;
+  const hasCommunityData = !!researchData?.analysis || discussions.length > 0 || !!discussionSummary;
 
   // Effective scores — use client-side computed score as fallback when DB has 0
   const effectiveAiScore = (results?.ai_score || 0) > 0 ? results.ai_score : (aiData?.confidence_score || 0);
@@ -703,10 +740,16 @@ export function SimplifiedValidationSignals({
       {/* ── Community Research (real data from Reddit, HN, forums) ── */}
       {hasCommunityData && (
         <CommunityResearchResults
-          analysis={researchData.analysis}
-          sources={researchData.sources}
-          researchScore={researchData.researchScore}
-          totalDataPoints={researchData.totalDataPoints}
+          // New GigaBrain-style fields (from reddit-discussion-extractor)
+          summary={discussionSummary ?? undefined}
+          discussions={discussions}
+          discussionsFound={discussions.length || researchData?.sources?.reddit?.postsFound}
+          // Legacy deep-analysis fields (from validate-opportunity-research)
+          analysis={researchData?.analysis}
+          sources={researchData?.sources}
+          researchScore={researchData?.researchScore}
+          totalDataPoints={researchData?.totalDataPoints}
+          hasRealCommunityData={researchData?.hasRealCommunityData}
         />
       )}
 
