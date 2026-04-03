@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>FounderLens — Validation UI Test</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0d0d0d; color: #e8e8e8; font-family: 'Inter', sans-serif; padding: 2rem; }
+  .card { background: #141414; border: 1px solid #222; border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; }
+  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .badge-green { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+  .badge-orange { background: rgba(249,115,22,0.15); color: #fb923c; border: 1px solid rgba(249,115,22,0.3); }
+  .badge-purple { background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
+  .badge-gray { background: rgba(156,163,175,0.15); color: #9ca3af; border: 1px solid rgba(156,163,175,0.3); }
+  .progress { background: #2a2a2a; border-radius: 999px; height: 6px; }
+  .progress-bar { background: linear-gradient(90deg, #f048a0, #8b5cf6); border-radius: 999px; height: 6px; }
+  .reddit-card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; padding: 12px 16px; margin-bottom: 8px; display: flex; align-items: flex-start; gap: 12px; transition: border-color 0.2s; }
+  .reddit-card:hover { border-color: rgba(168,85,247,0.3); }
+  a { text-decoration: none; color: inherit; }
+  .score-ring { width: 80px; height: 80px; border-radius: 999px; border: 4px solid #4ade80; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+</style>
+</head>
+<body>
+
+<div style="max-width:900px;margin:0 auto">
+
+  <!-- Header -->
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:2rem;">
+    <svg width="32" height="32" viewBox="0 0 28 28" fill="none">
+      <circle cx="14" cy="14" r="13" stroke="url(#g)" stroke-width="2"/>
+      <path d="M8 10 Q14 6 20 10 Q20 18 14 22 Q8 18 8 10Z" fill="url(#g)" opacity="0.85"/>
+      <defs><linearGradient id="g" x1="0" y1="0" x2="28" y2="28" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#f048a0"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs>
+    </svg>
+    <div>
+      <h1 style="font-size:20px;font-weight:700;margin:0">FounderLens Validation</h1>
+      <p style="font-size:12px;color:#666;margin:0">Community Intelligence Report — AI-Powered Email Management for Entrepreneurs</p>
+    </div>
+  </div>
+
+  <!-- Score + TLDR Header -->
+  <div class="card" style="border-color: rgba(168,85,247,0.2); background: linear-gradient(135deg, rgba(168,85,247,0.05), transparent)">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44l-1.1-5.52A2.5 2.5 0 0 1 8 11h.5V5.5A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44l1.1-5.52A2.5 2.5 0 0 0 16 11h-.5V5.5A2.5 2.5 0 0 0 14.5 2Z"/></svg>
+        <span style="font-weight:600">Community Intelligence</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font-size:28px;font-weight:700;color:#4ade80">72</span>
+        <div>
+          <div style="font-size:11px;color:#666">Opportunity Score</div>
+          <span class="badge badge-green">Strong Demand</span>
+        </div>
+      </div>
+    </div>
+    <div class="progress" style="margin-bottom:16px"><div class="progress-bar" style="width:72%"></div></div>
+    <p style="font-size:14px;color:#aaa;line-height:1.7;font-style:italic;border-left:2px solid rgba(168,85,247,0.4);padding-left:12px">
+      Reddit discussions confirm strong demand for AI email management among entrepreneurs — multiple high-upvote threads show founders spending 3-4 hours daily on email and actively seeking solutions. Key competitors like SaneBox and Superhuman are frequently mentioned with mixed reviews, creating a clear gap for a smarter AI-first approach.
+    </p>
+    <div style="display:flex;gap:16px;margin-top:12px;font-size:12px;color:#555">
+      <span>💬 32 posts analyzed</span>
+      <span>🔍 4 Reddit searches</span>
+      <span>🤖 GPT-4o summarized</span>
+    </div>
+  </div>
+
+  <!-- 3-column scores -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:1rem">
+    <div class="card" style="text-align:center">
+      <div style="font-size:32px;font-weight:700;color:#4ade80">72%</div>
+      <div style="font-size:12px;color:#555;margin-top:4px">Overall Score</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:32px;font-weight:700;color:#facc15">68%</div>
+      <div style="font-size:12px;color:#555;margin-top:4px">AI Analysis</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:32px;font-weight:700;color:#4ade80">78%</div>
+      <div style="font-size:12px;color:#555;margin-top:4px">Community Score</div>
+    </div>
+  </div>
+
+  <!-- Demand Signals -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;font-weight:600">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+      Demand Signals
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;gap:8px;font-size:13px;color:#bbb;align-items:flex-start">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" style="flex-shrink:0;margin-top:2px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        r/Entrepreneur thread "I spend 4 hours a day on email, killing my productivity" received 2.1k upvotes — clear demand signal
+      </div>
+      <div style="display:flex;gap:8px;font-size:13px;color:#bbb;align-items:flex-start">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" style="flex-shrink:0;margin-top:2px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Multiple r/smallbusiness posts asking "what email tool actually works for a solo founder?" with no satisfying answers
+      </div>
+      <div style="display:flex;gap:8px;font-size:13px;color:#bbb;align-items:flex-start">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" style="flex-shrink:0;margin-top:2px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        r/productivity search for "AI email" shows 47 posts in past year — growing awareness with no dominant solution
+      </div>
+      <div style="display:flex;gap:8px;font-size:13px;color:#bbb;align-items:flex-start">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" style="flex-shrink:0;margin-top:2px"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Founders specifically mention missing important client emails as a recurring pain — willingness to pay is implied
+      </div>
+    </div>
+  </div>
+
+  <!-- Pain Points -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;font-weight:600">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fb923c" stroke-width="2"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+      Pain Points Found on Reddit
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div style="display:flex;align-items:flex-start;gap:8px">
+        <svg width="14" height="14" fill="#fb923c" style="flex-shrink:0;margin-top:2px" viewBox="0 0 24 24"><path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+        <div>
+          <div style="font-size:13px;font-weight:600">Email volume overwhelming</div>
+          <div style="font-size:11px;color:#666">Founders receive 100-300 emails/day; can't distinguish urgent from noise</div>
+        </div>
+        <span class="badge badge-orange" style="margin-left:auto;flex-shrink:0">Very Common</span>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:8px">
+        <svg width="14" height="14" fill="#fb923c" style="flex-shrink:0;margin-top:2px" viewBox="0 0 24 24"><path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+        <div>
+          <div style="font-size:13px;font-weight:600">Existing tools too complex or expensive</div>
+          <div style="font-size:11px;color:#666">SaneBox, Superhuman mentioned but criticized for price or limited AI capabilities</div>
+        </div>
+        <span class="badge badge-orange" style="margin-left:auto;flex-shrink:0">Common</span>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:8px">
+        <svg width="14" height="14" fill="#fb923c" style="flex-shrink:0;margin-top:2px" viewBox="0 0 24 24"><path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+        <div>
+          <div style="font-size:13px;font-weight:600">Missed client emails costing deals</div>
+          <div style="font-size:11px;color:#666">Multiple posts describe losing revenue because important emails got buried</div>
+        </div>
+        <span class="badge badge-orange" style="margin-left:auto;flex-shrink:0">Common</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Key Quotes -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;font-weight:600">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/></svg>
+      What People Are Saying
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="border-left:4px solid #ef4444;background:rgba(239,68,68,0.06);padding:10px 12px;border-radius:0 8px 8px 0">
+        <p style="font-size:13px;color:#bbb;font-style:italic;margin:0 0 6px">"I've tried every email app. None of them actually understand context. I still spend 3 hours a day just triaging. It's killing my focus time."</p>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:#555">
+          <span>r/Entrepreneur</span>
+          <span>👍 847 upvotes</span>
+        </div>
+      </div>
+      <div style="border-left:4px solid #f97316;background:rgba(249,115,22,0.06);padding:10px 12px;border-radius:0 8px 8px 0">
+        <p style="font-size:13px;color:#bbb;font-style:italic;margin:0 0 6px">"Missed a $12k contract because the email got buried. I need something that actually reads my email and tells me what matters."</p>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:#555">
+          <span>r/smallbusiness</span>
+          <span>👍 312 upvotes</span>
+        </div>
+      </div>
+      <div style="border-left:4px solid #eab308;background:rgba(234,179,8,0.06);padding:10px 12px;border-radius:0 8px 8px 0">
+        <p style="font-size:13px;color:#bbb;font-style:italic;margin:0 0 6px">"Superhuman is too expensive for a solo founder. SaneBox helps a little but doesn't draft replies. I'd pay $20/month for something that does both."</p>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:#555">
+          <span>r/productivity</span>
+          <span>👍 156 upvotes</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Competitors -->
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;font-weight:600">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Competitors Mentioned on Reddit
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      <span class="badge badge-gray">Superhuman</span>
+      <span class="badge badge-gray">SaneBox</span>
+      <span class="badge badge-gray">Shortwave</span>
+      <span class="badge badge-gray">HEY Email</span>
+      <span class="badge badge-gray">Gmail filters</span>
+    </div>
+  </div>
+
+  <!-- Reddit Source Posts -->
+  <div class="card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="#FF4500"><path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095z"/></svg>
+        Source Posts from Reddit
+      </div>
+      <span class="badge badge-gray">32 found</span>
+    </div>
+
+    <a href="https://reddit.com/r/Entrepreneur/comments/abc123" target="_blank" class="reddit-card">
+      <div style="flex:1">
+        <p style="font-size:13px;font-weight:500;margin:0 0 6px;line-height:1.4">I spend 4 hours a day on email and it's killing my startup — what tools actually help?</p>
+        <div style="display:flex;gap:10px;font-size:11px;color:#555">
+          <span class="badge badge-gray" style="font-size:10px">r/Entrepreneur</span>
+          <span>👍 2,147</span>
+          <span>💬 234 comments</span>
+        </div>
+      </div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    </a>
+    <a href="https://reddit.com/r/smallbusiness/comments/def456" target="_blank" class="reddit-card">
+      <div style="flex:1">
+        <p style="font-size:13px;font-weight:500;margin:0 0 6px;line-height:1.4">Missed a $12k contract because email got buried — anyone else struggling with email overload as a solo founder?</p>
+        <div style="display:flex;gap:10px;font-size:11px;color:#555">
+          <span class="badge badge-gray" style="font-size:10px">r/smallbusiness</span>
+          <span>👍 891</span>
+          <span>💬 98 comments</span>
+        </div>
+      </div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    </a>
+    <a href="https://reddit.com/r/productivity/comments/ghi789" target="_blank" class="reddit-card">
+      <div style="flex:1">
+        <p style="font-size:13px;font-weight:500;margin:0 0 6px;line-height:1.4">Superhuman vs SaneBox — which one is actually worth it for entrepreneurs? Or is there something better?</p>
+        <div style="display:flex;gap:10px;font-size:11px;color:#555">
+          <span class="badge badge-gray" style="font-size:10px">r/productivity</span>
+          <span>👍 412</span>
+          <span>💬 67 comments</span>
+        </div>
+      </div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    </a>
+    <a href="https://reddit.com/r/Entrepreneur/comments/jkl012" target="_blank" class="reddit-card">
+      <div style="flex:1">
+        <p style="font-size:13px;font-weight:500;margin:0 0 6px;line-height:1.4">I'd pay $20/month for an AI that reads my emails and tells me what actually matters</p>
+        <div style="display:flex;gap:10px;font-size:11px;color:#555">
+          <span class="badge badge-gray" style="font-size:10px">r/Entrepreneur</span>
+          <span>👍 267</span>
+          <span>💬 41 comments</span>
+        </div>
+      </div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    </a>
+
+    <button style="width:100%;padding:8px;background:transparent;border:1px solid #2a2a2a;border-radius:8px;color:#555;font-size:12px;cursor:pointer;margin-top:4px">
+      ↓ Show all 32 posts
+    </button>
+  </div>
+
+  <!-- Build CTA -->
+  <div class="card" style="border-color: rgba(34,197,94,0.3); background: linear-gradient(135deg, rgba(34,197,94,0.05), rgba(16,185,129,0.03))">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>
+        <div>
+          <div style="font-weight:600;color:#4ade80">Ready to build?</div>
+          <div style="font-size:13px;color:#4ade80;opacity:0.7">Scored 72% — market signal is strong enough to move forward</div>
+        </div>
+      </div>
+      <button style="padding:8px 16px;background:linear-gradient(135deg,#4ade80,#22c55e);color:#000;font-weight:600;border:none;border-radius:8px;cursor:pointer;font-size:13px">
+        Build →
+      </button>
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-top:2rem;font-size:11px;color:#333">
+    FounderLens × GigaBrain Integration — Community Intelligence powered by PullPush + OpenAI GPT-4o
+  </div>
+</div>
+
+</body>
+</html>

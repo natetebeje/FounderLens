@@ -248,6 +248,148 @@ function delay(ms: number) {
 }
 
 // ============================================================================
+// AI SEARCH PLANNING — Generate topic-specific queries and subreddits
+// This is the key to relevance: find WHERE real users discuss this topic,
+// not generic entrepreneur/startup subreddits.
+// ============================================================================
+
+interface SearchPlan {
+  queries: string[];
+  subreddits: string[];
+  keywords: string[];
+}
+
+async function generateSearchPlan(
+  opportunity: { title: string; description: string; target_market: string; opportunity_tags?: string[] },
+  apiKey: string | undefined
+): Promise<SearchPlan> {
+  // Domain-specific subreddit mappings for common opportunity categories
+  // Used as fallback when OpenAI is not available
+  const domainMap: Record<string, string[]> = {
+    // Health & wellness
+    'postpartum|maternal|pregnancy|birth|breastfeed|newborn|baby|infant': ['BabyBumps', 'NewParents', 'breastfeeding', 'Mommit', 'Parenting', 'beyondthebump', 'postpartum'],
+    'nutrition|meal|diet|food|recipe|eat': ['nutrition', 'MealPrepSunday', 'EatCheapAndHealthy', 'loseit', 'HealthyFood', 'Cooking', 'DietAdvice'],
+    'fitness|workout|gym|exercise|weight loss': ['fitness', 'loseit', 'xxfitness', 'running', 'WeightLossAdvice', 'gym', 'bodyweightfitness'],
+    'mental health|anxiety|depression|therapy|stress': ['mentalhealth', 'anxiety', 'depression', 'therapy', 'selfimprovement', 'psychology'],
+    'sleep|insomnia|tired': ['sleep', 'insomnia', 'LifeAdvice', 'selfimprovement'],
+    // Tech & software
+    'ai|machine learning|llm|chatgpt|automation': ['MachineLearning', 'artificial', 'ChatGPT', 'LocalLLaMA', 'AIAssistants', 'productivity'],
+    'saas|software|app|tool|platform': ['SaaS', 'software', 'ProductManagement', 'webdev', 'programming'],
+    'developer|coding|programming|api': ['programming', 'webdev', 'learnprogramming', 'cscareerquestions', 'devops'],
+    // Business
+    'email|inbox|communication': ['productivity', 'lifehacks', 'GMail', 'Outlook', 'selfimprovement', 'Entrepreneur'],
+    'productivity|workflow|time management': ['productivity', 'getting_things_done', 'selfimprovement', 'LifeProTips', 'ADHD'],
+    'ecommerce|shopify|amazon|store|sell online': ['ecommerce', 'shopify', 'FulfillmentByAmazon', 'dropship', 'Entrepreneur'],
+    'finance|investment|money|budget|savings': ['personalfinance', 'investing', 'financialindependence', 'povertyfinance', 'Money'],
+    'real estate|property|rental|housing': ['realestateinvesting', 'RealEstate', 'landlord', 'FirstTimeHomeBuyer', 'REBubble'],
+    // Education
+    'education|learning|course|student|teach': ['learnprogramming', 'edtech', 'Teachers', 'StudentLoans', 'OnlineLearning'],
+    'language|translation|multilingual': ['languagelearning', 'linguistics', 'translation', 'polyglot'],
+    // Niche consumer
+    'pet|dog|cat|animal': ['dogs', 'cats', 'Pets', 'DogAdvice', 'CatAdvice', 'AskVet'],
+    'travel|trip|vacation|tourism': ['travel', 'solotravel', 'digitalnomad', 'shoestring', 'TravelHacks'],
+    'home|interior|decor|renovation': ['homeimprovement', 'malelivingspace', 'femalelivingspace', 'DIY', 'HomeDecorating'],
+  };
+
+  // Find matching domains based on opportunity content
+  const opportunityText = `${opportunity.title} ${opportunity.description} ${opportunity.target_market}`.toLowerCase();
+  let matchedSubreddits: string[] = [];
+  
+  for (const [pattern, subs] of Object.entries(domainMap)) {
+    const regex = new RegExp(pattern.replace(/\|/g, '|'), 'i');
+    if (regex.test(opportunityText)) {
+      matchedSubreddits.push(...subs);
+    }
+  }
+  
+  // Deduplicate
+  matchedSubreddits = [...new Set(matchedSubreddits)];
+
+  if (!apiKey) {
+    // No OpenAI — use domain map results or generic fallback
+    const fallbackSubs = matchedSubreddits.length > 0 
+      ? matchedSubreddits.slice(0, 8)
+      : ['Entrepreneur', 'smallbusiness', 'startups'];
+    
+    const words = opportunityText.split(/\s+/).filter(w => w.length > 4);
+    return {
+      queries: [
+        opportunity.title,
+        `${opportunity.target_market} problems`,
+        `${opportunity.title} app recommendation`,
+        `best ${opportunity.title.split(' ').slice(-2).join(' ')}`,
+      ],
+      subreddits: fallbackSubs,
+      keywords: words.slice(0, 10),
+    };
+  }
+
+  // Use OpenAI to generate highly specific search plan
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0.3,
+        max_tokens: 600,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a Reddit research expert. Return valid JSON only.',
+          },
+          {
+            role: 'user',
+            content: `Generate targeted Reddit search queries and subreddits for validating this business opportunity. Focus on WHERE the TARGET USERS actually discuss this topic — not generic startup/entrepreneur subreddits unless the product literally serves entrepreneurs.
+
+OPPORTUNITY: "${opportunity.title}"
+DESCRIPTION: ${opportunity.description}
+TARGET MARKET: ${opportunity.target_market}
+
+Return JSON:
+{
+  "queries": ["6-8 specific search queries that would find people discussing THIS problem. Use the target users' language, not startup jargon. Include: problem-focused queries, competitor queries, specific pain point queries"],
+  "subreddits": ["8-12 specific subreddits where the TARGET USERS (not founders) hang out. E.g. for postpartum nutrition: BabyBumps, NewParents, breastfeeding, Mommit — NOT r/entrepreneur"],
+  "keywords": ["8-12 relevance keywords specific to this topic — a result must contain at least one to be considered relevant"]
+}`,
+          },
+        ],
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const plan = JSON.parse(data.choices[0].message.content);
+      
+      // Merge AI subreddits with domain-map matches, deduplicate, cap at 10
+      const combined = [...new Set([...(plan.subreddits || []), ...matchedSubreddits])].slice(0, 10);
+      console.log(`🎯 AI search plan: ${plan.queries?.length} queries, ${combined.length} subreddits: ${combined.join(', ')}`);
+      
+      return {
+        queries: (plan.queries || []).slice(0, 8),
+        subreddits: combined,
+        keywords: (plan.keywords || []).slice(0, 12),
+      };
+    }
+  } catch (err) {
+    console.error('Search plan generation failed:', err);
+  }
+
+  // Fallback to domain map
+  return {
+    queries: [
+      opportunity.title,
+      `${opportunity.target_market} problem`,
+      `${opportunity.title} alternative`,
+      `best app for ${opportunity.target_market}`,
+    ],
+    subreddits: matchedSubreddits.length > 0 ? matchedSubreddits.slice(0, 8) : ['Entrepreneur', 'smallbusiness', 'startups'],
+    keywords: opportunityText.split(/\s+/).filter(w => w.length > 4).slice(0, 10),
+  };
+}
+
+// ============================================================================
 // AI SUMMARIZATION — FounderLens-branded pain point extraction
 // ============================================================================
 
@@ -390,21 +532,20 @@ serve(async (req) => {
       }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // Build search queries from opportunity data if not provided
-    const searchQueries = queries.length > 0 ? queries : [
-      opportunity.title,
-      `${opportunity.target_market} problem`,
-      `${opportunity.title} alternative`,
-      `${opportunity.title} frustrating`,
-      ...(opportunity.opportunity_tags ?? []).slice(0, 3),
-    ];
+    // Use AI to generate topic-specific queries and subreddits when not provided
+    // This is the core of GigaBrain-style intelligence — find WHERE real users discuss this topic
+    const apiKey = Deno.env.get('OPENAI_API_KEY');
+    
+    let searchQueries = queries;
+    let searchKeywords = keywords;
+    let searchSubreddits = subreddits;
 
-    const searchKeywords = keywords.length > 0 ? keywords : [
-      ...opportunity.title.toLowerCase().split(' ').filter((w: string) => w.length > 3),
-      ...(opportunity.opportunity_tags ?? []),
-    ];
-
-    const searchSubreddits = subreddits.length > 0 ? subreddits : ['entrepreneur', 'startups', 'smallbusiness'];
+    if (queries.length === 0 || subreddits.length === 0) {
+      const aiPlan = await generateSearchPlan(opportunity, apiKey);
+      if (searchQueries.length === 0) searchQueries = aiPlan.queries;
+      if (searchKeywords.length === 0) searchKeywords = aiPlan.keywords;
+      if (searchSubreddits.length === 0) searchSubreddits = aiPlan.subreddits;
+    }
 
     console.log(`🔎 Searching with ${searchQueries.length} queries, ${searchSubreddits.length} subreddits`);
 
@@ -413,7 +554,6 @@ serve(async (req) => {
     console.log(`✅ Found ${posts.length} Reddit posts`);
 
     // AI summarization
-    const apiKey = Deno.env.get('OPENAI_API_KEY');
     const summary = apiKey
       ? await summarizeForFounderLens(
           { title: opportunity.title, description: opportunity.description, targetMarket: opportunity.target_market },

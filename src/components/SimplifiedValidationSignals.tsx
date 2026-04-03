@@ -21,6 +21,65 @@ interface ValidationSignalsProps {
   validationStatus?: any;
 }
 
+// ── Topic-specific subreddit + query generator ────────────────────────────────
+// Ensures we search WHERE the actual target users are, not generic startup subs
+function getTopicSearchPlan(opportunity: any): { queries: string[]; subreddits: string[] } {
+  const text = `${opportunity.title} ${opportunity.description} ${opportunity.target_market} ${opportunity.problem_statement}`.toLowerCase();
+
+  const domainMap: [RegExp, string[]][] = [
+    [/postpartum|maternal|new mom|new mother|after birth|breastfeed|newborn|baby|infant/, ['BabyBumps', 'NewParents', 'breastfeeding', 'Mommit', 'beyondthebump', 'postpartum', 'NewMoms', 'Parenting']],
+    [/nutrition|meal plan|diet|food prep|recipe|calorie|eating/, ['nutrition', 'MealPrepSunday', 'EatCheapAndHealthy', 'loseit', 'HealthyFood', 'Cooking']],
+    [/fitness|workout|gym|exercise|weight loss|running|lifting/, ['fitness', 'loseit', 'xxfitness', 'running', 'bodyweightfitness', 'gym']],
+    [/mental health|anxiety|depression|therapy|stress|burnout/, ['mentalhealth', 'anxiety', 'depression', 'therapy', 'selfimprovement']],
+    [/sleep|insomnia|tired|fatigue/, ['sleep', 'insomnia', 'selfimprovement']],
+    [/email|inbox|reply|outreach|communication/, ['productivity', 'lifehacks', 'GMail', 'Outlook', 'selfimprovement']],
+    [/productivity|workflow|time management|task|planner|organize/, ['productivity', 'getting_things_done', 'selfimprovement', 'LifeProTips', 'ADHD']],
+    [/ai tool|ai assistant|chatgpt|llm|machine learning|automation/, ['MachineLearning', 'ChatGPT', 'LocalLLaMA', 'AIAssistants', 'artificial']],
+    [/\bsaas\b|software product|software platform|developer tool|web app|mobile app for business/, ['SaaS', 'software', 'ProductManagement', 'webdev']],
+    [/coding|programming|developer|engineer/, ['programming', 'webdev', 'learnprogramming', 'cscareerquestions']],
+    [/ecommerce|shopify|amazon seller|dropship|online store/, ['ecommerce', 'shopify', 'FulfillmentByAmazon', 'dropship']],
+    [/finance|investment|money|budget|savings|debt|frugal/, ['personalfinance', 'investing', 'financialindependence', 'povertyfinance']],
+    [/real estate|property|rental|landlord|housing/, ['realestateinvesting', 'RealEstate', 'landlord', 'FirstTimeHomeBuyer']],
+    [/education|learning|course|student|teacher|school/, ['Teachers', 'StudentLoans', 'OnlineLearning', 'learnprogramming']],
+    [/language learning|translation|multilingual/, ['languagelearning', 'linguistics', 'translation', 'polyglot']],
+    [/\bpet\b|\bdog\b|\bcat\b|veterinary|animal care|dog training|cat care/, ['dogs', 'cats', 'Pets', 'DogAdvice', 'AskVet', 'Dogtraining', 'puppy101']],
+    [/travel|trip|vacation|backpacking|digital nomad|budget travel|hostel|cheap flight/, ['travel', 'solotravel', 'digitalnomad', 'shoestring', 'TravelHacks', 'backpacking']],
+    [/home improvement|interior|decor|renovation|diy/, ['homeimprovement', 'DIY', 'HomeDecorating']],
+    [/freelance|consultant|solopreneur|gig work/, ['freelance', 'consulting', 'digitalnomad']],
+    [/marketing|seo|content marketing|social media|growth/, ['marketing', 'SEO', 'content_marketing', 'digital_marketing']],
+    [/hr|hiring|recruiting|employee|talent acquisition/, ['humanresources', 'recruiting', 'jobs', 'careerguidance']],
+    [/startup|founder|entrepreneur|bootstrapped|side project/, ['Entrepreneur', 'startups', 'SideProject', 'indiehackers']],
+  ];
+
+  const matchedSubs: string[] = [];
+  for (const [pattern, subs] of domainMap) {
+    if (pattern.test(text)) matchedSubs.push(...subs);
+  }
+
+  const uniqueSubs = [...new Set(matchedSubs)];
+  const subreddits = uniqueSubs.length > 0
+    ? uniqueSubs.slice(0, 10)
+    : ['Entrepreneur', 'startups', 'smallbusiness']; // last resort fallback
+
+  // Generate specific queries based on opportunity details
+  const title = opportunity.title || '';
+  const targetMarket = opportunity.target_market || '';
+  const problem = opportunity.problem_statement || '';
+
+  const queries = [
+    title,
+    `${targetMarket} problems with ${title.split(' ').slice(0, 3).join(' ')}`,
+    `${title} alternative recommendation`,
+    `${targetMarket} frustrated with`,
+    problem.split('.')[0].slice(0, 80),
+    `best app for ${targetMarket}`,
+    `${title} reviews`,
+    ...(opportunity.opportunity_tags || []).slice(0, 2),
+  ].filter(Boolean).filter(q => q.length > 5).slice(0, 8);
+
+  return { queries, subreddits };
+}
+
 export function SimplifiedValidationSignals({
   opportunity,
   onSignalsComplete,
@@ -171,6 +230,9 @@ export function SimplifiedValidationSignals({
       setCurrentStep('Searching Reddit, HN & forums for real discussions...');
       setProgress(40);
 
+      const searchPlan = getTopicSearchPlan(opportunity);
+      console.log('🎯 Topic subreddits:', searchPlan.subreddits.join(', '));
+
       const researchResponse = await supabase.functions.invoke('validate-opportunity-research', {
         body: {
           opportunityId: opportunity.id,
@@ -178,7 +240,10 @@ export function SimplifiedValidationSignals({
           description: opportunity.description,
           targetMarket: opportunity.target_market,
           problemStatement: opportunity.problem_statement,
-          tags: opportunity.opportunity_tags || []
+          tags: opportunity.opportunity_tags || [],
+          // Pass pre-computed topic-specific subreddits so the function doesn't use generic defaults
+          subreddits: searchPlan.subreddits,
+          queries: searchPlan.queries,
         }
       });
 
@@ -203,11 +268,11 @@ export function SimplifiedValidationSignals({
         const extractResponse = await supabase.functions.invoke('reddit-discussion-extractor', {
           body: {
             opportunityId: opportunity.id,
-            queries: [
-              opportunity.title,
-              `${opportunity.target_market} problem`,
-              `${opportunity.title} alternative`,
-              ...(opportunity.opportunity_tags || []).slice(0, 3),
+            queries: searchPlan.queries,
+            subreddits: searchPlan.subreddits,
+            keywords: [
+              ...opportunity.title.toLowerCase().split(' ').filter((w: string) => w.length > 3),
+              ...(opportunity.opportunity_tags || []),
             ],
           }
         });

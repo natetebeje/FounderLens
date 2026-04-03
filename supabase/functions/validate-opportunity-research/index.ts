@@ -126,10 +126,17 @@ Return JSON:
     const data = await response.json();
     const plan = JSON.parse(data.choices[0].message.content);
 
+    // Merge AI subreddits with domain-map detected subreddits for best coverage
+    const domainSubs = getTopicSubreddits(
+      opportunity.title + ' ' + opportunity.targetMarket + ' ' + opportunity.problemStatement
+    );
+    const mergedSubs = [...new Set([...(plan.subreddits || []), ...domainSubs])].slice(0, 12);
+    console.log('🎯 Subreddits after merge:', mergedSubs.join(', '));
+
     return {
       queries: (plan.queries || []).slice(0, 8),
       hnQueries: (plan.hnQueries || []).slice(0, 5),
-      subreddits: (plan.subreddits || []).slice(0, 10),
+      subreddits: mergedSubs,
       keywords: (plan.keywords || []).slice(0, 12),
       webQueries: (plan.webQueries || []).slice(0, 5),
       localLanguageQueries: (plan.localLanguageQueries || []).slice(0, 4),
@@ -138,6 +145,40 @@ Return JSON:
     console.error('Search plan generation failed, using fallback:', error);
     return generateFallbackSearchPlan(opportunity);
   }
+}
+
+function getTopicSubreddits(text: string): string[] {
+  const t = text.toLowerCase();
+  const domainMap: [RegExp, string[]][] = [
+    [/postpartum|maternal|pregnancy|birth|breastfeed|newborn|baby|infant|new mom|new mother/, ['BabyBumps', 'NewParents', 'breastfeeding', 'Mommit', 'Parenting', 'beyondthebump', 'postpartum', 'NewMoms']],
+    [/nutrition|meal plan|diet|food prep|recipe|calorie|eating habit/, ['nutrition', 'MealPrepSunday', 'EatCheapAndHealthy', 'loseit', 'HealthyFood', 'Cooking', 'DietAdvice']],
+    [/fitness|workout|gym|exercise|weight loss|running|lifting/, ['fitness', 'loseit', 'xxfitness', 'running', 'WeightLossAdvice', 'bodyweightfitness', 'gym']],
+    [/mental health|anxiety|depression|therapy|stress|burnout|wellbeing/, ['mentalhealth', 'anxiety', 'depression', 'therapy', 'selfimprovement', 'psychology']],
+    [/sleep|insomnia|tired|fatigue/, ['sleep', 'insomnia', 'LifeAdvice', 'selfimprovement']],
+    [/email|inbox|communication|reply|outreach/, ['productivity', 'lifehacks', 'GMail', 'Outlook', 'selfimprovement']],
+    [/productivity|workflow|time management|task|todo|planner/, ['productivity', 'getting_things_done', 'selfimprovement', 'LifeProTips', 'ADHD']],
+    [/ai|machine learning|llm|chatgpt|automation|generative/, ['MachineLearning', 'artificial', 'ChatGPT', 'LocalLLaMA', 'AIAssistants']],
+    [/saas|software|app|platform|developer tool/, ['SaaS', 'software', 'ProductManagement', 'webdev']],
+    [/coding|programming|developer|api|software engineer/, ['programming', 'webdev', 'learnprogramming', 'cscareerquestions', 'devops']],
+    [/ecommerce|shopify|amazon|dropship|online store/, ['ecommerce', 'shopify', 'FulfillmentByAmazon', 'dropship']],
+    [/finance|investment|money|budget|savings|debt|frugal/, ['personalfinance', 'investing', 'financialindependence', 'povertyfinance', 'Money']],
+    [/real estate|property|rental|housing|landlord/, ['realestateinvesting', 'RealEstate', 'landlord', 'FirstTimeHomeBuyer']],
+    [/education|learning|course|student|teacher|school/, ['learnprogramming', 'Teachers', 'StudentLoans', 'OnlineLearning', 'edtech']],
+    [/language|translation|multilingual|foreign language/, ['languagelearning', 'linguistics', 'translation', 'polyglot']],
+    [/pet|dog|cat|animal|veterinary/, ['dogs', 'cats', 'Pets', 'DogAdvice', 'CatAdvice', 'AskVet']],
+    [/travel|trip|vacation|tourism|backpacking/, ['travel', 'solotravel', 'digitalnomad', 'shoestring', 'TravelHacks']],
+    [/home|interior|decor|renovation|diy|repair/, ['homeimprovement', 'malelivingspace', 'DIY', 'HomeDecorating']],
+    [/startup|founder|entrepreneur|side project|bootstrapped/, ['Entrepreneur', 'startups', 'SideProject', 'EntrepreneurRideAlong', 'indiehackers']],
+    [/freelance|consultant|gig|contract work|solopreneur/, ['freelance', 'freelanceWriters', 'consulting', 'Entrepreneur', 'digitalnomad']],
+    [/hr|hiring|recruit|employee|talent/, ['humanresources', 'recruiting', 'jobs', 'careerguidance', 'cscareerquestions']],
+    [/marketing|seo|content|social media|growth/, ['marketing', 'SEO', 'content_marketing', 'digital_marketing', 'socialmedia']],
+  ];
+  const matched: string[] = [];
+  for (const [pattern, subs] of domainMap) {
+    if (pattern.test(t)) matched.push(...subs);
+  }
+  const unique = [...new Set(matched)];
+  return unique.length > 0 ? unique.slice(0, 10) : ['Entrepreneur', 'startups', 'smallbusiness'];
 }
 
 function generateFallbackSearchPlan(opportunity: {
@@ -168,7 +209,7 @@ function generateFallbackSearchPlan(opportunity: {
       `${opportunity.targetMarket} solution`,
       `${opportunity.problemStatement.split('.')[0]}`,
     ],
-    subreddits: ['startups', 'entrepreneur'],
+    subreddits: getTopicSubreddits(opportunity.title + ' ' + opportunity.targetMarket + ' ' + opportunity.problemStatement),
     keywords: uniqueKeywords,
     webQueries: [
       `${titleWords} forum discussion`,
