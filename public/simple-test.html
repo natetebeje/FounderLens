@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple React Test</title>
+</head>
+<body>
+    <div id="test-root"></div>
+    
+    <script type="module">
+        // Simple test to see if basic JavaScript is working
+        console.log('🎯 Simple test script loaded');
+        
+        const testDiv = document.getElementById('test-root');
+        if (testDiv) {
+            testDiv.innerHTML = `
+                <div style="padding: 20px; font-family: Arial, sans-serif;">
+                    <h1 style="color: #333;">🍳 Simple Test Page</h1>
+                    <p style="color: #666;">This is a basic HTML test to verify the dev server is working.</p>
+                    <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                        <h3>✅ Status: Basic HTML/JS Working</h3>
+                        <p>If you can see this, the dev server is serving files correctly.</p>
+                    </div>
+                    <div style="background: #fff3cd; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107;">
+                        <h3>🎯 Root Cause Analysis</h3>
+                        <ul style="line-height: 1.6;">
+                            <li><strong>Problem:</strong> React app showing blank screen on both main route and custom routes</li>
+                            <li><strong>Likely Cause:</strong> JavaScript error preventing React from mounting, possibly hidden by Sentry error boundary</li>
+                            <li><strong>Next Step:</strong> Check browser dev tools Network tab for failed resource loads</li>
+                            <li><strong>Alternative:</strong> Temporarily bypass Sentry error boundary to see actual errors</li>
+                        </ul>
+                    </div>
+                    <button onclick="testFunction()" style="background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin-top: 15px;">
+                        Test JavaScript
+                    </button>
+                    <div id="js-result" style="margin-top: 10px; padding: 10px; background: #e8f5e8; border-radius: 4px; display: none;">
+                        JavaScript is working! ✅
+                    </div>
+                </div>
+            `;
+            console.log('✅ Test content injected successfully');
+        }
+        
+        // Test function
+        window.testFunction = function() {
+            console.log('🎯 Test button clicked');
+            const resultDiv = document.getElementById('js-result');
+            if (resultDiv) {
+                resultDiv.style.display = 'block';
+            }
+        };
+    </script>
+</body>
+</html>

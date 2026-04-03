@@ -1,0 +1,31 @@
+project_id = "phppdhsozkpsquxlfezg"
+
+[functions.ai-discussion-analyzer]
+verify_jwt = false
+
+[functions.enhanced-validation]
+verify_jwt = true
+
+[functions.generate-opportunities]
+verify_jwt = false
+
+[functions.landing-page-generator]
+verify_jwt = true
+
+[functions.mvp-insights-generator]
+verify_jwt = false
+
+[functions.process-refund]
+verify_jwt = true
+
+[functions.reddit-discussion-extractor]
+verify_jwt = false
+
+[functions.reddit-test]
+verify_jwt = false
+
+[functions.openai-analyze]
+verify_jwt = false
+
+[functions.validate-opportunity-research]
+verify_jwt = false

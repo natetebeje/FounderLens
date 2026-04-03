@@ -1,0 +1,35 @@
+{
+  "name": "FounderLens",
+  "short_name": "FounderLens",
+  "description": "AI-Powered Business Opportunity Discovery Platform",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#8B5CF6",
+  "orientation": "portrait-primary",
+  "categories": ["business", "productivity", "lifestyle"],
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/lovable-uploads/c10149ce-689c-4417-8b3b-777476f9a804.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/lovable-uploads/c10149ce-689c-4417-8b3b-777476f9a804.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/lovable-uploads/f7221bc8-4fe0-43ca-8a85-0a9001798ccc.png",
+      "sizes": "1200x630",
+      "type": "image/png",
+      "platform": "wide",
+      "label": "FounderLens Dashboard"
+    }
+  ]
+}

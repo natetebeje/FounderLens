@@ -1,0 +1,22 @@
+User-agent: *
+Allow: /
+
+# Allow crawling of main pages
+Allow: /pricing
+Allow: /enterprise
+
+# Prevent crawling of user-specific content
+Disallow: /admin
+Disallow: /auth
+Disallow: /discovery
+Disallow: /opportunities
+Disallow: /analytics
+Disallow: /profile
+Disallow: /subscription
+Disallow: /team
+Disallow: /onboarding
+Disallow: /validation/
+Disallow: /settings
+
+# Sitemap location (update with your actual domain)
+Sitemap: https://founderlens.com/sitemap.xml

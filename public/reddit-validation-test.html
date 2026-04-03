@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reddit Validation Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        .button:hover {
+            background: #2563eb;
+        }
+        .button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+        .results {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f0f9ff;
+            border-radius: 6px;
+            border-left: 4px solid #3b82f6;
+        }
+        .error {
+            background: #fef2f2;
+            border-left-color: #ef4444;
+            color: #dc2626;
+        }
+        .discussion {
+            background: white;
+            margin: 10px 0;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #e5e7eb;
+        }
+        .relevance-score {
+            background: #10b981;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .ai-summary {
+            background: #f0f9ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 6px;
+            padding: 12px;
+            margin: 10px 0;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .ai-summary h5 {
+            margin: 0 0 8px 0;
+            color: #1e40af;
+            font-size: 13px;
+            font-weight: bold;
+        }
+        .follow-up-questions {
+            background: #f9fafb;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .follow-up-questions h3 {
+            color: #374151;
+            margin: 0 0 15px 0;
+        }
+        .question-item {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 12px;
+            margin: 8px 0;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .question-item:hover {
+            background: #f3f4f6;
+            border-color: #3b82f6;
+        }
+        .loading {
+            color: #6b7280;
+            font-style: italic;
+        }
+        .ai-loading {
+            color: #3b82f6;
+            font-style: italic;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 Reddit Validation Test</h1>
+        <p>Testing the optimized Reddit validation system with AI-powered relevance analysis.</p>
+        
+        <div>
+            <label for="market">Market Topic:</label><br>
+            <input type="text" id="market" value="Interactive Cooking Experience Platform" style="width: 100%; padding: 8px; margin: 5px 0; border: 1px solid #ccc; border-radius: 4px;">
+        </div>
+        
+        <button id="validateBtn" class="button" onclick="runRedditValidation()">
+            🚀 Run Reddit Validation
+        </button>
+        
+        <button id="summarizeBtn" class="button" onclick="generateAISummaries()" style="display: none; background: #8b5cf6;">
+            🤖 Generate AI Summaries
+        </button>
+        
+        <button id="followUpBtn" class="button" onclick="generateFollowUpQuestions()" style="display: none; background: #f59e0b;">
+            💡 Generate Follow-up Questions
+        </button>
+        
+        <div id="results"></div>
+    </div>
+
+    <script>
+        // Initialize Supabase client
+        const supabaseUrl = 'https://nxzfubxujyfvwifyffvb.supabase.co';
+        const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im54emZ1Ynh1anlmdndpZnlmZnZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzI1NzA2NzQsImV4cCI6MjA0ODE0NjY3NH0.FJqJnGdW_Zt8Uf2Qx0XhFKDJRLKqXhOdKJvJZQJZQJY';
+        const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+        async function runRedditValidation() {
+            const btn = document.getElementById('validateBtn');
+            const results = document.getElementById('results');
+            const market = document.getElementById('market').value;
+            
+            btn.disabled = true;
+            btn.textContent = '🔄 Analyzing...';
+            
+            results.innerHTML = '<div class="results loading">🔍 Starting Reddit validation...</div>';
+            
+            try {
+                console.log('🚀 Starting Reddit validation for:', market);
+                
+                // Generate a unique opportunity ID for this test
+                const opportunityId = crypto.randomUUID();
+                
+                // Call the Reddit extractor edge function
+                const { data, error } = await supabase.functions.invoke('reddit-discussion-extractor', {
+                    body: {
+                        opportunityId: opportunityId,
+                        organizationId: null,
+                        subreddits: ['cooking', 'recipes', 'food', 'cookingapps', 'kitchentech'],
+                        keywords: ['cooking', 'recipe', 'food', 'kitchen', 'interactive', 'platform', 'app'],
+                        limit: 10,
+                        globalSearch: true
+                    }
+                });
+                
+                if (error) {
+                    throw new Error(`Reddit API Error: ${error.message}`);
+                }
+                
+                console.log('✅ Reddit data received:', data);
+                
+                if (data.success && data.discussions && data.discussions.length > 0) {
+                    displayResults(data.discussions, market);
+                } else {
+                    results.innerHTML = '<div class="results error">❌ No relevant discussions found. Try a different topic or check the console for details.</div>';
+                }
+                
+            } catch (err) {
+                console.error('💥 Reddit validation failed:', err);
+                results.innerHTML = `<div class="results error">❌ Error: ${err.message}</div>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🚀 Run Reddit Validation';
+            }
+        }
+        
+        let currentDiscussions = [];
+        let currentMarket = '';
+        
+        function displayResults(discussions, market) {
+            const results = document.getElementById('results');
+            currentDiscussions = discussions;
+            currentMarket = market;
+            
+            let html = `<div class="results">
+                <h3>✅ Reddit Validation Results</h3>
+                <p><strong>Market:</strong> ${market}</p>
+                <p><strong>Discussions Found:</strong> ${discussions.length}</p>
+            </div>`;
+            
+            discussions.forEach((discussion, index) => {
+                const relevanceScore = Math.round((discussion.relevance_score || 0) * 100);
+                html += `
+                    <div class="discussion" id="discussion-${index}">
+                        <div style="display: flex; justify-content: between; align-items: start; margin-bottom: 10px;">
+                            <h4 style="margin: 0; flex: 1;">${discussion.title}</h4>
+                            <span class="relevance-score">${relevanceScore}%</span>
+                        </div>
+                        <p><strong>Subreddit:</strong> r/${discussion.subreddit}</p>
+                        <p><strong>Score:</strong> ${discussion.score} upvotes | <strong>Comments:</strong> ${discussion.num_comments}</p>
+                        <p><strong>Author:</strong> u/${discussion.author}</p>
+                        ${discussion.selftext ? `<p><strong>Content:</strong> ${discussion.selftext.substring(0, 200)}...</p>` : ''}
+                        <div id="ai-summary-${index}"></div>
+                        <a href="https://reddit.com${discussion.permalink}" target="_blank" style="color: #3b82f6;">View on Reddit →</a>
+                    </div>
+                `;
+            });
+            
+            results.innerHTML = html;
+            
+            // Show AI action buttons
+            document.getElementById('summarizeBtn').style.display = 'inline-block';
+            document.getElementById('followUpBtn').style.display = 'inline-block';
+            
+            console.log('🎉 Results displayed successfully');
+        }
+        
+        async function generateAISummaries() {
+            const btn = document.getElementById('summarizeBtn');
+            btn.disabled = true;
+            btn.textContent = '🤖 Generating Summaries...';
+            
+            try {
+                for (let i = 0; i < currentDiscussions.length; i++) {
+                    const discussion = currentDiscussions[i];
+                    const summaryDiv = document.getElementById(`ai-summary-${i}`);
+                    
+                    summaryDiv.innerHTML = '<div class="ai-loading">🤖 Generating AI summary...</div>';
+                    
+                    // Create content for AI analysis
+                    const content = `Title: ${discussion.title}\n\nContent: ${discussion.selftext || 'No additional content'}\n\nSubreddit: r/${discussion.subreddit}\nScore: ${discussion.score} upvotes, ${discussion.num_comments} comments`;
+                    
+                    const prompt = `Analyze this Reddit discussion about "${currentMarket}" and provide:
+1. A 2-3 sentence summary of the key insights
+2. How it relates to the market opportunity
+3. Key pain points or opportunities mentioned
+
+Discussion: ${content}
+
+Provide a concise, actionable summary focused on market validation insights.`;
+                    
+                    try {
+                        const { data, error } = await supabase.functions.invoke('openai-analyze', {
+                            body: {
+                                prompt: prompt,
+                                maxTokens: 200
+                            }
+                        });
+                        
+                        if (data && data.response) {
+                            summaryDiv.innerHTML = `
+                                <div class="ai-summary">
+                                    <h5>🤖 AI Summary</h5>
+                                    <p>${data.response}</p>
+                                </div>
+                            `;
+                        } else {
+                            summaryDiv.innerHTML = '<div class="ai-loading">❌ AI summary failed</div>';
+                        }
+                    } catch (err) {
+                        console.error('AI summary error:', err);
+                        summaryDiv.innerHTML = '<div class="ai-loading">❌ AI summary failed</div>';
+                    }
+                    
+                    // Small delay between requests
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🤖 Generate AI Summaries';
+            }
+        }
+        
+        async function generateFollowUpQuestions() {
+            const btn = document.getElementById('followUpBtn');
+            const results = document.getElementById('results');
+            
+            btn.disabled = true;
+            btn.textContent = '💡 Generating Questions...';
+            
+            try {
+                // Create context from all discussions
+                const discussionContext = currentDiscussions.map(d => 
+                    `- ${d.title} (r/${d.subreddit}, ${d.score} upvotes): ${(d.selftext || '').substring(0, 100)}...`
+                ).join('\n');
+                
+                const prompt = `Based on these Reddit discussions about "${currentMarket}", generate 4-5 strategic follow-up questions that would help validate this market opportunity further.
+
+Discussions found:
+${discussionContext}
+
+Generate questions that focus on:
+1. Market size and demand validation
+2. User pain points and needs
+3. Competitive landscape
+4. Product-market fit opportunities
+5. Implementation challenges
+
+Format as a simple list of actionable questions.`;
+                
+                const { data, error } = await supabase.functions.invoke('openai-analyze', {
+                    body: {
+                        prompt: prompt,
+                        maxTokens: 300
+                    }
+                });
+                
+                if (data && data.response) {
+                    // Parse questions from response
+                    const questions = data.response.split('\n').filter(q => q.trim() && (q.includes('?') || q.match(/^\d+\./)));
+                    
+                    let questionsHtml = `
+                        <div class="follow-up-questions">
+                            <h3>💡 AI-Generated Follow-up Questions</h3>
+                            <p style="color: #6b7280; font-size: 14px; margin-bottom: 15px;">Strategic questions to further validate the "${currentMarket}" opportunity:</p>
+                    `;
+                    
+                    questions.forEach((question, index) => {
+                        const cleanQuestion = question.replace(/^\d+\.\s*/, '').trim();
+                        questionsHtml += `
+                            <div class="question-item" onclick="searchQuestion('${cleanQuestion.replace(/'/g, "\\'")}')">❓ ${cleanQuestion}</div>
+                        `;
+                    });
+                    
+                    questionsHtml += '</div>';
+                    results.innerHTML += questionsHtml;
+                } else {
+                    results.innerHTML += '<div class="follow-up-questions">❌ Failed to generate follow-up questions</div>';
+                }
+                
+            } catch (err) {
+                console.error('Follow-up questions error:', err);
+                results.innerHTML += '<div class="follow-up-questions">❌ Failed to generate follow-up questions</div>';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '💡 Generate Follow-up Questions';
+            }
+        }
+        
+        function searchQuestion(question) {
+            // This could trigger additional research or validation
+            console.log('🔍 Follow-up research question:', question);
+            alert(`This would trigger additional research for: "${question}"\n\nIn a full implementation, this could:\n- Search for more specific Reddit discussions\n- Query other data sources\n- Generate deeper market insights`);
+        }
+        
+    </script>
+</body>
+</html>
