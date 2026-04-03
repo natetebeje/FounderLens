@@ -336,8 +336,8 @@ async function searchReddit(
     console.log('🔐 Using Reddit OAuth API');
     return _searchRedditOAuth(token, queries, subreddits, limit);
   }
-  console.log('🔄 Using PullPush fallback (bypasses Reddit datacenter blocks)');
-  return _searchPullPush(queries, limit);
+  console.log('🔄 Using PullPush (topic search + subreddit preference)');
+  return _searchPullPush(queries, subreddits, limit);
 }
 
 async function _searchRedditOAuth(
@@ -402,16 +402,19 @@ async function _searchRedditOAuth(
 }
 
 // PullPush.io — community Pushshift mirror, works from Deno/cloud environments
-// This is the GigaBrain-proven strategy for bypassing Reddit's datacenter IP blocks.
-async function _searchPullPush(queries: string[], limit: number): Promise<RedditPost[]> {
+// Strategy: search by TOPIC across all Reddit, then use subreddits as a
+// relevance signal (prefer posts from target subreddits, don't exclude others).
+async function _searchPullPush(queries: string[], subreddits: string[], limit: number): Promise<RedditPost[]> {
   const allPosts: RedditPost[] = [];
-  console.log('📡 PullPush search with', queries.length, 'queries');
+  const targetSubSet = new Set(subreddits.map(s => s.toLowerCase().replace(/^r\//, '')));
+  console.log(`📡 PullPush: ${queries.length} queries across all Reddit (targeting ${subreddits.length} subreddits as preference)`);
 
-  for (const query of queries.slice(0, 7)) {
+  // Strategy 1: search by topic across ALL Reddit (catches posts in any subreddit)
+  for (const query of queries.slice(0, 6)) {
     try {
       const url = new URL('https://api.pullpush.io/reddit/search/submission/');
       url.searchParams.set('q', query);
-      url.searchParams.set('size', '15');
+      url.searchParams.set('size', '20');
       url.searchParams.set('score', '>1');
 
       const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
@@ -436,25 +439,75 @@ async function _searchPullPush(queries: string[], limit: number): Promise<Reddit
           topComments: [],
         });
       }
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 350));
     } catch (e) {
       console.error(`PullPush error for "${query}":`, e);
     }
   }
 
-  // Fetch comments for top posts
-  const unique = Array.from(new Map(allPosts.map(p => [p.permalink, p])).values())
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+  // Strategy 2: also search directly within target subreddits
+  // PullPush supports subreddit-scoped search — gets posts the global search might miss
+  for (const subreddit of subreddits.slice(0, 5)) {
+    for (const query of queries.slice(0, 2)) {
+      try {
+        const url = new URL('https://api.pullpush.io/reddit/search/submission/');
+        url.searchParams.set('q', query);
+        url.searchParams.set('subreddit', subreddit.replace(/^r\//, ''));
+        url.searchParams.set('size', '10');
+        url.searchParams.set('score', '>0');
 
-  for (const post of unique.slice(0, 8)) {
+        const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
+        if (!res.ok) continue;
+
+        const data = await res.json();
+        for (const p of data?.data ?? []) {
+          if (!p.title) continue;
+          allPosts.push({
+            title: p.title,
+            selftext: (p.selftext ?? '').substring(0, 1000),
+            author: p.author ?? '[deleted]',
+            subreddit: p.subreddit ?? subreddit,
+            score: p.score ?? 0,
+            numComments: p.num_comments ?? 0,
+            permalink: p.permalink ? `https://reddit.com${p.permalink}` : `https://reddit.com/r/${p.subreddit}/comments/${p.id}/`,
+            createdUtc: p.created_utc ?? 0,
+            upvoteRatio: p.upvote_ratio ?? 0,
+            topComments: [],
+          });
+        }
+        await new Promise(r => setTimeout(r, 300));
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  // Deduplicate, then sort: posts from target subreddits first, then by score
+  const seen = new Map<string, RedditPost>();
+  for (const p of allPosts) {
+    const key = p.permalink || p.title;
+    if (!seen.has(key)) seen.set(key, p);
+  }
+  const unique = [...seen.values()];
+
+  unique.sort((a, b) => {
+    const aInTarget = targetSubSet.has(a.subreddit.toLowerCase().replace(/^r\//, '')) ? 1 : 0;
+    const bInTarget = targetSubSet.has(b.subreddit.toLowerCase().replace(/^r\//, '')) ? 1 : 0;
+    if (aInTarget !== bInTarget) return bInTarget - aInTarget; // target subs float to top
+    return b.score - a.score;
+  });
+
+  const topPosts = unique.slice(0, limit);
+  const inTargetCount = topPosts.filter(p => targetSubSet.has(p.subreddit.toLowerCase().replace(/^r\//, ''))).length;
+  console.log(`📬 PullPush: ${unique.length} posts found (${inTargetCount} from target subreddits in top ${topPosts.length})`);
+
+  // Fetch comments for top posts
+  for (const post of topPosts.slice(0, 8)) {
     try {
       const postId = post.permalink.split('/')[6] ?? post.permalink.split('/').pop();
       if (!postId) continue;
       const cUrl = new URL('https://api.pullpush.io/reddit/search/comment/');
       cUrl.searchParams.set('link_id', `t3_${postId}`);
       cUrl.searchParams.set('size', '6');
-      cUrl.searchParams.set('score', '>1');
+      cUrl.searchParams.set('score', '>0');
       const cRes = await fetch(cUrl.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
       if (cRes.ok) {
         const cData = await cRes.json();
@@ -463,21 +516,20 @@ async function _searchPullPush(queries: string[], limit: number): Promise<Reddit
           .slice(0, 6)
           .map((c: any) => ({ body: c.body.substring(0, 500), author: c.author ?? '', score: c.score ?? 0 }));
       }
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, 250));
     } catch (e) { /* ignore */ }
   }
 
-  console.log(`📬 PullPush returned ${unique.length} posts`);
-  return unique;
+  return topPosts;
 }
 
-// Legacy wrapper — called from serve() which previously passed a token separately
+// Legacy wrapper
 async function searchRedditPublic(
   queries: string[],
   subreddits: string[],
   limit: number = 25
 ): Promise<RedditPost[]> {
-  return _searchPullPush(queries, limit);
+  return _searchPullPush(queries, subreddits, limit);
 }
 
 // STEP 3b: WEB FORUM SEARCH (Quora, forums, blogs via DuckDuckGo)
@@ -966,6 +1018,8 @@ serve(async (req: Request) => {
       targetMarket,
       problemStatement,
       tags,
+      subreddits: clientSubreddits = [],
+      queries: clientQueries = [],
     } = await req.json();
 
     if (!opportunityId || !title) {
@@ -976,9 +1030,7 @@ serve(async (req: Request) => {
     }
 
     const apiKey = Deno.env.get('OPENAI_API_KEY');
-    if (!apiKey) {
-      throw new Error('OpenAI API key not configured');
-    }
+    // Continue without OpenAI key — will use domain-map fallback for search planning
 
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -991,9 +1043,19 @@ serve(async (req: Request) => {
 
     // Step 1: AI-powered search planning
     console.log('🧠 Generating targeted search plan...');
-    const searchPlan = await generateSearchPlan(opportunity, apiKey);
+    const aiSearchPlan = await generateSearchPlan(opportunity, apiKey);
+
+    // Merge: AI plan + client-provided subreddits/queries (client-side domain map + AI)
+    const searchPlan = {
+      ...aiSearchPlan,
+      subreddits: [...new Set([...aiSearchPlan.subreddits, ...clientSubreddits])].slice(0, 14),
+      queries: clientQueries.length > 0
+        ? [...new Set([...clientQueries, ...aiSearchPlan.queries])].slice(0, 10)
+        : aiSearchPlan.queries,
+    };
+
     console.log(`🔍 Search queries: ${searchPlan.queries.join(' | ')}`);
-    console.log(`📌 Target subreddits: ${searchPlan.subreddits.join(', ')}`);
+    console.log(`📌 Target subreddits (${searchPlan.subreddits.length}): ${searchPlan.subreddits.join(', ')}`);
     console.log(`🏷️ Relevance keywords: ${searchPlan.keywords.join(', ')}`);
 
     // Step 2: Search all sources in parallel

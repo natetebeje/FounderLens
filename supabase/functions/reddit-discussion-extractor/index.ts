@@ -83,7 +83,7 @@ async function searchReddit(
   }
 
   console.log('🔄 Reddit OAuth not configured — using PullPush fallback');
-  return searchPullPush(queries, keywords, limit);
+  return searchPullPush(queries, keywords, limit, subreddits);
 }
 
 async function searchRedditOAuth(
@@ -154,37 +154,35 @@ async function searchRedditOAuth(
 async function searchPullPush(
   queries: string[],
   keywords: string[],
-  limit: number
+  limit: number,
+  subreddits: string[] = []
 ): Promise<RedditPost[]> {
-  // PullPush.io — community Pushshift mirror, works from Deno/cloud environments
+  // Strategy: search by TOPIC across all Reddit PLUS subreddit-scoped searches.
+  // Posts from target subreddits are ranked higher but never excluded.
   const all: RedditPost[] = [];
+  const targetSubSet = new Set(subreddits.map(s => s.toLowerCase().replace(/^r\//, '')));
 
+  // Pass 1: topic search across all Reddit
   for (const query of queries.slice(0, 6)) {
     try {
       const url = new URL('https://api.pullpush.io/reddit/search/submission/');
       url.searchParams.set('q', query);
-      url.searchParams.set('size', '15');
-      url.searchParams.set('score', '>1');
+      url.searchParams.set('size', '20');
+      url.searchParams.set('score', '>0');
 
-      const res = await fetch(url.toString(), {
-        headers: { 'User-Agent': 'FounderLens/1.0' },
-      });
-
-      if (!res.ok) {
-        console.warn(`PullPush failed (${res.status}) for query: ${query}`);
-        continue;
-      }
+      const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
+      if (!res.ok) { console.warn(`PullPush ${res.status} for "${query}"`); continue; }
 
       const data = await res.json();
       for (const p of data?.data ?? []) {
         if (!p.title) continue;
-        // Relevance pre-filter using keywords
+        // Keyword relevance pre-filter
         const text = `${p.title} ${p.selftext ?? ''}`.toLowerCase();
         const relevant = keywords.length === 0 || keywords.some(k => text.includes(k.toLowerCase()));
         if (!relevant) continue;
 
         all.push({
-          id: p.id ?? `pullpush_${Date.now()}`,
+          id: p.id ?? `pp_${Date.now()}_${Math.random()}`,
           title: p.title,
           selftext: (p.selftext ?? '').substring(0, 1000),
           url: p.url ?? '',
@@ -194,30 +192,71 @@ async function searchPullPush(
           num_comments: p.num_comments ?? 0,
           upvote_ratio: p.upvote_ratio ?? 0,
           created_utc: p.created_utc ?? 0,
-          permalink: p.permalink
-            ? `https://reddit.com${p.permalink}`
-            : `https://reddit.com/r/${p.subreddit}/comments/${p.id}/`,
+          permalink: p.permalink ? `https://reddit.com${p.permalink}` : `https://reddit.com/r/${p.subreddit}/comments/${p.id}/`,
           top_comments: [],
         });
       }
-      await delay(400);
-    } catch (e) {
-      console.error(`PullPush error for "${query}":`, e);
+      await delay(350);
+    } catch (e) { console.error(`PullPush error for "${query}":`, e); }
+  }
+
+  // Pass 2: subreddit-scoped searches (finds posts global search misses)
+  for (const subreddit of subreddits.slice(0, 5)) {
+    for (const query of queries.slice(0, 2)) {
+      try {
+        const url = new URL('https://api.pullpush.io/reddit/search/submission/');
+        url.searchParams.set('q', query);
+        url.searchParams.set('subreddit', subreddit.replace(/^r\//, ''));
+        url.searchParams.set('size', '10');
+        url.searchParams.set('score', '>0');
+
+        const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
+        if (!res.ok) continue;
+
+        const data = await res.json();
+        for (const p of data?.data ?? []) {
+          if (!p.title) continue;
+          all.push({
+            id: p.id ?? `pp_sub_${Date.now()}_${Math.random()}`,
+            title: p.title,
+            selftext: (p.selftext ?? '').substring(0, 1000),
+            url: p.url ?? '',
+            author: p.author ?? '[deleted]',
+            subreddit: p.subreddit ?? subreddit,
+            score: p.score ?? 0,
+            num_comments: p.num_comments ?? 0,
+            upvote_ratio: p.upvote_ratio ?? 0,
+            created_utc: p.created_utc ?? 0,
+            permalink: p.permalink ? `https://reddit.com${p.permalink}` : `https://reddit.com/r/${p.subreddit}/comments/${p.id}/`,
+            top_comments: [],
+          });
+        }
+        await delay(300);
+      } catch (e) { /* ignore */ }
     }
   }
 
-  // Fetch comments for top posts via PullPush
-  const unique = dedup(all).sort((a, b) => b.score - a.score).slice(0, limit);
-  for (const post of unique.slice(0, 8)) {
+  // Deduplicate and rank: target subreddits first, then by score
+  const deduped = dedup(all);
+  deduped.sort((a, b) => {
+    const aIn = targetSubSet.has(a.subreddit.toLowerCase().replace(/^r\//, '')) ? 1 : 0;
+    const bIn = targetSubSet.has(b.subreddit.toLowerCase().replace(/^r\//, '')) ? 1 : 0;
+    if (aIn !== bIn) return bIn - aIn;
+    return b.score - a.score;
+  });
+  const topPosts = deduped.slice(0, limit);
+  const inTarget = topPosts.filter(p => targetSubSet.has(p.subreddit.toLowerCase().replace(/^r\//, ''))).length;
+  console.log(`📬 PullPush: ${deduped.length} posts (${inTarget} from target subreddits in top ${topPosts.length})`);
+
+  // Fetch comments for top posts
+  for (const post of topPosts.slice(0, 8)) {
     try {
       const commentUrl = new URL('https://api.pullpush.io/reddit/search/comment/');
       commentUrl.searchParams.set('link_id', `t3_${post.id}`);
       commentUrl.searchParams.set('size', '6');
-      commentUrl.searchParams.set('score', '>1');
+      commentUrl.searchParams.set('score', '>0');
 
-      const cRes = await fetch(commentUrl.toString(), {
-        headers: { 'User-Agent': 'FounderLens/1.0' },
-      });
+      const cRes = await fetch(commentUrl.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
       if (cRes.ok) {
         const cData = await cRes.json();
         post.top_comments = (cData?.data ?? [])
@@ -225,12 +264,11 @@ async function searchPullPush(
           .slice(0, 6)
           .map((c: any) => ({ body: c.body.substring(0, 400), author: c.author ?? '', score: c.score ?? 0 }));
       }
-      await delay(300);
+      await delay(250);
     } catch (e) { /* ignore */ }
   }
 
-  console.log(`📬 PullPush returned ${unique.length} posts`);
-  return unique;
+  return topPosts;
 }
 
 function dedup(posts: RedditPost[]): RedditPost[] {
