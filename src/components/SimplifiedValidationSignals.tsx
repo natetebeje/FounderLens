@@ -12,6 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { CommunityResearchResults } from './CommunityResearchResults';
 import { ResearchReport } from './ResearchReport';
+import { OpportunityChat } from './OpportunityChat';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 
@@ -875,6 +876,21 @@ export function SimplifiedValidationSignals({
             hasRealCommunityData={researchData?.hasRealCommunityData}
           />
         )
+      )}
+
+      {/* ── Idea Coach — Phase 1 ── */}
+      {isCompleted && hasCommunityData && (
+        <OpportunityChat
+          opportunityId={opportunity.id}
+          opportunityTitle={opportunity.title}
+          researchData={researchReportData ? {
+            opportunityScore: researchReportData.opportunityScore,
+            verdict: researchReportData.verdict,
+            painPoints: researchReportData.painPoints ?? [],
+            competitors: researchReportData.competitors ?? [],
+            marketGaps: researchReportData.marketGaps ?? [],
+          } : null}
+        />
       )}
 
       {/* ── Build CTA ── */}
