@@ -538,7 +538,10 @@ export function SimplifiedValidationSignals({
 
   const hasResults = !!(results && results.composite_score != null && results.composite_score > 0);
   const hasAiData = !!aiData;
-  const hasCommunityData = !!researchData?.analysis || discussions.length > 0 || !!discussionSummary || !!researchReportData;
+  // hasCommunityData: only true when we have a real v2 report OR a legacy AI summary.
+  // Bare reddit_discussions rows (discussions.length > 0) without a report are NOT enough —
+  // they are stale/irrelevant data and should not trigger the "completed" state.
+  const hasCommunityData = !!researchData?.analysis || !!discussionSummary || !!researchReportData;
 
   // Effective scores — use client-side computed score as fallback when DB has 0
   const effectiveAiScore = (results?.ai_score || 0) > 0 ? results.ai_score : (aiData?.confidence_score || 0);

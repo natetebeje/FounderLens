@@ -201,14 +201,16 @@ async function searchPullPush(
   }
 
   // Pass 2: subreddit-scoped searches (finds posts global search misses)
+  // RELEVANCE FIX: apply the same keyword filter as Pass 1 so viral off-topic
+  // posts ("My husband is cheating") don't flood through ranked by upvote score.
   for (const subreddit of subreddits.slice(0, 5)) {
     for (const query of queries.slice(0, 2)) {
       try {
         const url = new URL('https://api.pullpush.io/reddit/search/submission/');
         url.searchParams.set('q', query);
         url.searchParams.set('subreddit', subreddit.replace(/^r\//, ''));
-        url.searchParams.set('size', '10');
-        url.searchParams.set('score', '>0');
+        url.searchParams.set('size', '15');
+        url.searchParams.set('score', '>2'); // raise minimum — filters noise
 
         const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
         if (!res.ok) continue;
@@ -216,6 +218,10 @@ async function searchPullPush(
         const data = await res.json();
         for (const p of data?.data ?? []) {
           if (!p.title) continue;
+          // Apply the same keyword relevance filter as Pass 1
+          const text = `${p.title} ${p.selftext ?? ''}`.toLowerCase();
+          const relevant = keywords.length === 0 || keywords.some(k => text.includes(k.toLowerCase()));
+          if (!relevant) continue;
           all.push({
             id: p.id ?? `pp_sub_${Date.now()}_${Math.random()}`,
             title: p.title,
