@@ -4,6 +4,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import { HeroSection } from "@/components/HeroSection";
 import { FeaturesSection } from "@/components/FeaturesSection";
 import { AboutSection } from "@/components/AboutSection";
+import { WhyFounderLens } from "@/components/WhyFounderLens";
 import { PricingSection } from "@/components/PricingSection";
 import { SubscribeSection } from "@/components/SubscribeSection";
 import { ContactSection } from "@/components/ContactSection";
@@ -64,6 +65,7 @@ const Index = () => {
     <ModernBackground variant="mesh">
       <HeroSection />
       <FeaturesSection />
+      <WhyFounderLens />
       <AboutSection />
       <PricingSection />
       <SubscribeSection />
