@@ -65,11 +65,13 @@ const ValidationWorkflowSimplified = () => {
     const hasRealResults = hasData(workflow.automated_validation_results) || hasData(workflow.reddit_validation_results);
     const hasRun = !neverRun || hasRealResults;
 
+    const redditResults = workflow.reddit_validation_results;
+    const redditScore = redditResults?.researchScore ?? redditResults?.opportunityScore ?? 0;
     const persistedResults = hasRun ? {
       composite_score: workflow.composite_score || 0,
       status: workflow.status,
       ai_score: workflow.automated_score || 0,
-      reddit_score: 0,
+      reddit_score: redditScore,
       last_signal_at: workflow.last_signal_at
     } : null;
 
@@ -90,7 +92,7 @@ const ValidationWorkflowSimplified = () => {
   if (loading) {
     return (
       <ModernBackground variant="mesh" className="pt-16">
-        <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <div className="container mx-auto px-4 py-8 max-w-7xl">
           <div className="flex items-center gap-4 mb-8">
             <Button variant="ghost" onClick={() => navigate('/opportunities')}>
               <ArrowLeft className="h-4 w-4 mr-2" />
@@ -109,7 +111,7 @@ const ValidationWorkflowSimplified = () => {
   if (error || !opportunity) {
     return (
       <ModernBackground variant="mesh" className="pt-16">
-        <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <div className="container mx-auto px-4 py-8 max-w-7xl">
           <div className="flex items-center gap-4 mb-8">
             <Button variant="ghost" onClick={() => navigate('/opportunities')}>
               <ArrowLeft className="h-4 w-4 mr-2" />
@@ -131,7 +133,7 @@ const ValidationWorkflowSimplified = () => {
 
   return (
     <ModernBackground variant="mesh" className="pt-16">
-      <div className="container mx-auto px-4 py-8 max-w-4xl">
+      <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Back Button */}
         <div className="mb-6">
           <Button variant="ghost" size="sm" onClick={() => navigate('/opportunities')}>

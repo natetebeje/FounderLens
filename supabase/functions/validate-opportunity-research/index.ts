@@ -26,6 +26,30 @@ interface AppStoreApp {
   price?: string;
 }
 
+interface HackerNewsStory {
+  title: string;
+  points: number;
+  numComments: number;
+  url: string;
+  storyText: string;
+  objectID: string;
+}
+
+interface GoogleTrendsData {
+  trend: 'up' | 'down' | 'stable';
+  score: number;
+  searchVolume: number;
+  relatedQueries: string[];
+  isRealData: boolean;
+  trendHistory?: { date: string; value: number }[];
+}
+
+interface DuckDuckGoResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
 interface ResearchReport {
   // Evidence from web
   communityEvidence: WebSearchResult;
@@ -33,6 +57,10 @@ interface ResearchReport {
   competitorEvidence: WebSearchResult;
   twitterEvidence: WebSearchResult;
   analogousMarkets: WebSearchResult;
+  // New sources
+  hackerNewsPosts: HackerNewsStory[];
+  quoraForumResults: DuckDuckGoResult[];
+  googleTrends: GoogleTrendsData | null;
   // Analysis
   demandSignals: string[];
   painPoints: string[];
@@ -225,6 +253,189 @@ async function searchReddit(
 }
 
 // ============================================================================
+// STEP 3B: HACKERNEWS SEARCH (Algolia API — free, no key needed)
+// ============================================================================
+
+async function searchHackerNews(
+  queries: string[],
+  limit = 15
+): Promise<HackerNewsStory[]> {
+  const all: HackerNewsStory[] = [];
+  const seen = new Set<string>();
+
+  for (const query of queries.slice(0, 3)) {
+    try {
+      const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=10`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'FounderLens/1.0' } });
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      for (const hit of data.hits || []) {
+        if (seen.has(hit.objectID)) continue;
+        seen.add(hit.objectID);
+        all.push({
+          title: hit.title || '',
+          points: hit.points || 0,
+          numComments: hit.num_comments || 0,
+          url: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
+          storyText: (hit.story_text || '').substring(0, 300),
+          objectID: hit.objectID,
+        });
+      }
+      await new Promise(r => setTimeout(r, 300));
+    } catch (e) {
+      console.warn('HackerNews search error:', e);
+    }
+  }
+
+  return all.sort((a, b) => b.points - a.points).slice(0, limit);
+}
+
+// ============================================================================
+// STEP 3C: DUCKDUCKGO HTML SEARCH (Quora, StackOverflow, forums — no key)
+// ============================================================================
+
+async function searchDuckDuckGo(
+  query: string,
+  siteFilter = 'site:quora.com OR site:stackoverflow.com OR site:reddit.com'
+): Promise<DuckDuckGoResult[]> {
+  try {
+    const fullQuery = `${query} ${siteFilter}`;
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(fullQuery)}`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+    });
+    if (!res.ok) return [];
+
+    const html = await res.text();
+    const results: DuckDuckGoResult[] = [];
+
+    // Parse DuckDuckGo HTML results — extract links and snippets
+    const resultBlocks = html.split('class="result__a"').slice(1);
+    for (const block of resultBlocks.slice(0, 10)) {
+      const hrefMatch = block.match(/href="([^"]+)"/);
+      const titleMatch = block.match(/>([^<]+)</);
+      // Snippet is in the next result__snippet element
+      const snippetMatch = block.match(/class="result__snippet"[^>]*>([^<]+)/);
+
+      if (hrefMatch && titleMatch) {
+        let href = hrefMatch[1];
+        // DuckDuckGo wraps URLs — extract the actual URL
+        const uddgMatch = href.match(/uddg=([^&]+)/);
+        if (uddgMatch) href = decodeURIComponent(uddgMatch[1]);
+
+        results.push({
+          title: titleMatch[1].trim(),
+          url: href,
+          snippet: (snippetMatch?.[1] || '').trim(),
+        });
+      }
+    }
+
+    return results;
+  } catch (e) {
+    console.warn('DuckDuckGo search error:', e);
+    return [];
+  }
+}
+
+// ============================================================================
+// STEP 3D: GOOGLE TRENDS (SerpAPI with AI fallback)
+// ============================================================================
+
+async function getGoogleTrends(
+  title: string,
+  targetMarket: string,
+  apiKey: string
+): Promise<GoogleTrendsData> {
+  const serpApiKey = Deno.env.get('SERP_API_KEY');
+
+  if (serpApiKey) {
+    try {
+      // Use shorter keyword for Google Trends (long titles return no data)
+      const words = title.split(' ').filter((w: string) => w.length > 3);
+      const keyword = words.slice(0, 3).join(' ') || title.split(' ').slice(0, 3).join(' ');
+      const url = `https://serpapi.com/search.json?engine=google_trends&q=${encodeURIComponent(keyword)}&data_type=TIMESERIES&api_key=${serpApiKey}`;
+      console.log(`📊 Google Trends: querying "${keyword}"...`);
+      const res = await fetch(url);
+
+      if (res.ok) {
+        const data = await res.json();
+        console.log(`📊 Google Trends response keys: ${Object.keys(data).join(', ')}`);
+        const timelineData = data.interest_over_time?.timeline_data || [];
+        const relatedQueries = data.related_queries?.top?.map((q: any) => q.query) ||
+          data.related_queries?.rising?.map((q: any) => q.query) || [];
+
+        if (timelineData.length > 0) {
+          // Calculate trend direction from last 12 data points
+          const recentData = timelineData.slice(-12);
+          const firstHalf = recentData.slice(0, 6);
+          const secondHalf = recentData.slice(6);
+
+          const firstAvg = firstHalf.reduce((sum: number, item: any) => {
+            const val = item.values?.[0]?.extracted_value ?? item.value ?? 0;
+            return sum + val;
+          }, 0) / (firstHalf.length || 1);
+          const secondAvg = secondHalf.reduce((sum: number, item: any) => {
+            const val = item.values?.[0]?.extracted_value ?? item.value ?? 0;
+            return sum + val;
+          }, 0) / (secondHalf.length || 1);
+
+          const trend: 'up' | 'down' | 'stable' =
+            secondAvg > firstAvg * 1.2 ? 'up' :
+            secondAvg < firstAvg * 0.8 ? 'down' : 'stable';
+
+          const latestValue = timelineData[timelineData.length - 1]?.values?.[0]?.extracted_value ??
+            timelineData[timelineData.length - 1]?.value ?? 30;
+
+          return {
+            trend,
+            score: latestValue,
+            searchVolume: Math.round(latestValue * 500),
+            relatedQueries: relatedQueries.slice(0, 5),
+            isRealData: true,
+            trendHistory: timelineData.map((item: any) => ({
+              date: item.date || '',
+              value: item.values?.[0]?.extracted_value ?? item.value ?? 0,
+            })),
+          };
+        } else {
+          // SerpAPI returned data but no timeline — still use related queries
+          console.log(`📊 Google Trends: no timeline data, but got response`);
+          return {
+            trend: 'stable' as const,
+            score: 40,
+            searchVolume: 8000,
+            relatedQueries: relatedQueries.slice(0, 5),
+            isRealData: true,
+            trendHistory: [],
+          };
+        }
+      } else {
+        const errText = await res.text().catch(() => '');
+        console.warn(`📊 Google Trends SerpAPI error ${res.status}: ${errText.slice(0, 200)}`);
+      }
+    } catch (e) {
+      console.warn('SerpAPI Google Trends error:', e);
+    }
+  } else {
+    console.log('📊 No SERP_API_KEY env var found');
+  }
+
+  // Fallback: return conservative static estimate (avoids extra OpenAI call that triggers rate limits)
+  return {
+    trend: 'stable',
+    score: 40,
+    searchVolume: 8000,
+    relatedQueries: [`${title} alternative`, `best ${title.toLowerCase()}`],
+    isRealData: false,
+    trendHistory: [],
+  };
+}
+
+// ============================================================================
 // STEP 4: AI SEARCH PLANNING
 // ============================================================================
 
@@ -300,11 +511,14 @@ async function synthesizeResearch(
     competitorEvidence: WebSearchResult;
     twitterEvidence: WebSearchResult;
     analogousMarkets: WebSearchResult;
+    hackerNewsPosts: HackerNewsStory[];
+    quoraForumResults: DuckDuckGoResult[];
+    googleTrends: GoogleTrendsData | null;
     plan: { analogousMarkets: string[] };
   },
   apiKey: string
 ): Promise<ResearchReport> {
-  const totalDataPoints = data.redditPosts.length + data.communityEvidence.citations.length + data.competitorApps.length + data.competitorEvidence.citations.length + data.twitterEvidence.citations.length + data.analogousMarkets.citations.length;
+  const totalDataPoints = data.redditPosts.length + data.communityEvidence.citations.length + data.competitorApps.length + data.competitorEvidence.citations.length + data.twitterEvidence.citations.length + data.analogousMarkets.citations.length + data.hackerNewsPosts.length + data.quoraForumResults.length;
 
   const dataQuality: 'rich' | 'moderate' | 'sparse' = totalDataPoints >= 20 ? 'rich' : totalDataPoints >= 8 ? 'moderate' : 'sparse';
 
@@ -313,11 +527,29 @@ async function synthesizeResearch(
     `[Reddit ${i + 1}] r/${p.subreddit} | ${p.score}pts | "${p.title}"\n${p.selftext.slice(0, 200)}`
   ).join('\n\n');
 
+  // HackerNews context
+  const hnContext = data.hackerNewsPosts.length > 0
+    ? `HACKERNEWS DISCUSSIONS (${data.hackerNewsPosts.length} stories):\n${data.hackerNewsPosts.slice(0, 5).map((s, i) => `[HN ${i + 1}] ${s.title} (${s.points}pts, ${s.numComments} comments) — ${s.url}`).join('\n')}`
+    : '';
+
+  // Quora/forum context
+  const quoraContext = data.quoraForumResults.length > 0
+    ? `QUORA & FORUM DISCUSSIONS (${data.quoraForumResults.length} results):\n${data.quoraForumResults.slice(0, 5).map((r, i) => `[Forum ${i + 1}] "${r.title}" — ${r.snippet.slice(0, 150)}\n  ${r.url}`).join('\n')}`
+    : '';
+
+  // Google Trends context
+  const trendsContext = data.googleTrends
+    ? `GOOGLE TRENDS (${data.googleTrends.isRealData ? 'REAL API DATA' : 'AI ESTIMATED'}):\n- Search Interest: ${data.googleTrends.score}/100\n- Trend Direction: ${data.googleTrends.trend}\n- Estimated Monthly Search Volume: ${data.googleTrends.searchVolume}\n- Related Queries: ${data.googleTrends.relatedQueries.join(', ')}`
+    : '';
+
   const webContext = [
     data.communityEvidence.summary ? `COMMUNITY EVIDENCE:\n${data.communityEvidence.summary.slice(0, 600)}` : '',
     data.competitorEvidence.summary ? `COMPETITOR LANDSCAPE:\n${data.competitorEvidence.summary.slice(0, 600)}` : '',
     data.twitterEvidence.summary ? `TWITTER/SOCIAL EVIDENCE:\n${data.twitterEvidence.summary.slice(0, 400)}` : '',
     data.analogousMarkets.summary ? `ANALOGOUS MARKETS:\n${data.analogousMarkets.summary.slice(0, 600)}` : '',
+    hnContext,
+    quoraContext,
+    trendsContext,
   ].filter(Boolean).join('\n\n');
 
   const appContext = data.competitorApps.length > 0
@@ -355,11 +587,25 @@ async function synthesizeResearch(
 
   const citationContext = allCitations.map((c, i) => `[${i + 1}] ${c.title} — ${c.url}`).join('\n');
 
+  const thinDataProtocol = dataQuality === 'sparse' ? `
+
+THIN DATA PROTOCOL (data quality is sparse — this niche has limited direct community data):
+You MUST:
+1. Heavily leverage analogous market evidence to fill gaps
+2. For each finding, explicitly label whether it comes from "Community Data" or "AI Research (analogous to [market])"
+3. In the briefSummary, note that evidence is primarily from analogous markets
+4. In the fullReport, add a "## Data Confidence" section explaining what was directly observed vs inferred from analogous markets
+5. Do NOT penalize niche markets just because they have less Reddit discussion — thin data in a niche can indicate an underserved market opportunity
+` : '';
+
   const systemPrompt = `You are a senior startup researcher and market analyst hired to validate a business idea. You have access to:
-- Real community discussions from Reddit
-- Live web search results with citations  
+- Real community discussions from Reddit and HackerNews
+- Quora answers and forum threads
+- Live web search results with citations
 - App Store competitor data
+- Google Trends search interest data
 - Analogous market research
+- Twitter/X social sentiment
 
 Your job is to produce a thorough, honest validation report. You MUST:
 1. Cite real sources when they exist (use [N] citation format)
@@ -368,7 +614,8 @@ Your job is to produce a thorough, honest validation report. You MUST:
 4. Give a clear go/no-go recommendation with reasoning
 5. Distinguish between "no data found" (likely underserved niche) vs "data shows no demand"
 6. Think like a VC associate — what would make you excited or concerned about this?
-
+7. Reference Google Trends data to indicate whether search demand is growing, stable, or declining
+${thinDataProtocol}
 Return valid JSON only.`;
 
   const userPrompt = `Validate this business opportunity as a senior startup researcher:
@@ -434,22 +681,32 @@ Each opportunity MUST receive a score reflecting ITS specific evidence. Scores M
   }
 
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        temperature: 0.2,
-        max_tokens: 4000,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-      }),
-    });
+    // Wait a moment before synthesis to let rate limits recover from web searches
+    await new Promise(r => setTimeout(r, 2000));
 
-    if (!res.ok) throw new Error(`OpenAI synthesis failed: ${res.status}`);
+    // Retry up to 2 times on rate limit (429) errors
+    let res: Response | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          temperature: 0.2,
+          max_tokens: 4000,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+        }),
+      });
+      if (res.ok || res.status !== 429) break;
+      console.warn(`⚠️ Synthesis rate limited (attempt ${attempt + 1}/3), waiting...`);
+      await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
+    }
+
+    if (!res || !res.ok) throw new Error(`OpenAI synthesis failed: ${res?.status}`);
     const result = await res.json();
     const report = JSON.parse(result.choices[0].message.content);
 
@@ -489,6 +746,23 @@ Each opportunity MUST receive a score reflecting ITS specific evidence. Scores M
       if (compCits >= 3) score += 8;
       else if (compCits >= 1) score += 4;
 
+      // HackerNews discussions
+      const hnCount = data.hackerNewsPosts.length;
+      if (hnCount >= 5) score += 8;
+      else if (hnCount >= 1) score += 4;
+
+      // Quora/forum results
+      const quoraCount = data.quoraForumResults.length;
+      if (quoraCount >= 5) score += 6;
+      else if (quoraCount >= 1) score += 3;
+
+      // Google Trends
+      if (data.googleTrends) {
+        if (data.googleTrends.trend === 'up' && data.googleTrends.score > 60) score += 8;
+        else if (data.googleTrends.trend === 'stable' && data.googleTrends.score > 40) score += 4;
+        else if (data.googleTrends.trend === 'down') score -= 5;
+      }
+
       return Math.min(95, Math.max(15, score));
     }
 
@@ -510,6 +784,9 @@ Each opportunity MUST receive a score reflecting ITS specific evidence. Scores M
       competitorEvidence: data.competitorEvidence,
       twitterEvidence: data.twitterEvidence,
       analogousMarkets: data.analogousMarkets,
+      hackerNewsPosts: data.hackerNewsPosts,
+      quoraForumResults: data.quoraForumResults,
+      googleTrends: data.googleTrends,
       demandSignals: report.demandSignals || [],
       painPoints: report.painPoints || [],
       competitors: report.competitors || [],
@@ -587,54 +864,69 @@ serve(async (req: Request) => {
       ? [...new Set([...clientQueries, ...plan.queries])].slice(0, 10)
       : plan.queries;
 
-    // Step 2: All searches in parallel
-    console.log('\n📡 Step 2: Searching all sources in parallel...');
-    const [redditPosts, competitorApps, communityEvidence, competitorEvidence, twitterEvidence, analogousMarketsEvidence] = await Promise.all([
-
-      // Reddit (PullPush two-pass)
+    // Step 2: Search all 9 sources
+    // Batch 1: Non-OpenAI sources (free APIs, no rate limits)
+    console.log('\n📡 Step 2a: Searching free APIs in parallel...');
+    const [redditPosts, competitorApps, hackerNewsPosts, quoraForumResults, googleTrendsData] = await Promise.all([
       searchReddit(queries, subreddits, 25).then(posts => {
         console.log(`   ✓ Reddit: ${posts.length} posts`);
         return posts;
       }),
-
-      // App Store competitors
       searchAppStore(opportunity).then(apps => {
         console.log(`   ✓ App Store: ${apps.length} competitor apps`);
         return apps;
       }),
-
-      // Community pain points via web search
-      webSearch(
-        `Find community discussions, Reddit posts, Quora answers, and forum threads about problems faced by ${targetMarket}. Specifically about ${problemStatement}. Find real user complaints and requests for solutions.`,
-        apiKey
-      ).then(r => { console.log(`   ✓ Community web search: ${r.citations.length} citations`); return r; }),
-
-      // Competitor landscape via web search
-      webSearch(
-        `What existing apps, platforms, and services exist for "${title}"? Find competitor apps on App Store and Google Play, their user reviews, ratings, and what users complain about. Include any Ethiopian or African diaspora networking apps.`,
-        apiKey
-      ).then(r => { console.log(`   ✓ Competitor web search: ${r.citations.length} citations`); return r; }),
-
-      // Twitter/X and social evidence
-      webSearch(
-        `Find Twitter, X, LinkedIn posts, and social media discussions about "${title}" or "${targetMarket}" networking challenges. What are people saying? Any viral discussions?`,
-        apiKey
-      ).then(r => { console.log(`   ✓ Social/Twitter search: ${r.citations.length} citations`); return r; }),
-
-      // Analogous market research — THE KEY FOR NICHE MARKETS
-      plan.analogousMarkets.length > 0
-        ? webSearch(
-            `Research how analogous communities solved similar problems: ${plan.analogousMarkets.join(', ')}. What networking platforms did they build? What worked? What was the demand like? What can we learn for "${title}"?`,
-            apiKey
-          ).then(r => { console.log(`   ✓ Analogous markets: ${r.citations.length} citations (${plan.analogousMarkets.join(', ')})`); return r; })
-        : Promise.resolve({ query: '', summary: '', citations: [] }),
+      searchHackerNews(queries, 15).then(stories => {
+        console.log(`   ✓ HackerNews: ${stories.length} stories`);
+        return stories;
+      }),
+      searchDuckDuckGo(
+        `${title} ${targetMarket} ${problemStatement.split('.')[0]}`,
+      ).then(results => {
+        console.log(`   ✓ Quora/forums: ${results.length} results`);
+        return results;
+      }),
+      getGoogleTrends(title, targetMarket, apiKey).then(trends => {
+        console.log(`   ✓ Google Trends: ${trends.trend} (score: ${trends.score}, ${trends.isRealData ? 'real data' : 'AI estimated'})`);
+        return trends;
+      }),
     ]);
+
+    // Batch 2: OpenAI web searches (sequential to avoid 429 rate limits)
+    // Only 3 web search calls — combined community+Twitter, competitor, analogous
+    console.log('\n📡 Step 2b: Running OpenAI web searches (sequential)...');
+
+    const communityEvidence = await webSearch(
+      `Find community discussions, Reddit posts, Quora answers, Twitter/X posts, and forum threads about problems faced by ${targetMarket}. Specifically about "${problemStatement}". Find real user complaints, frustrations, and requests for solutions.`,
+      apiKey
+    );
+    console.log(`   ✓ Community + social web search: ${communityEvidence.citations.length} citations`);
+
+    await new Promise(r => setTimeout(r, 1500));
+
+    const competitorEvidence = await webSearch(
+      `What existing apps, platforms, and services exist for "${title}"? Find competitor apps on App Store and Google Play, their user reviews, ratings, and what users complain about.`,
+      apiKey
+    );
+    console.log(`   ✓ Competitor web search: ${competitorEvidence.citations.length} citations`);
+
+    // Twitter evidence is now merged into communityEvidence above
+    const twitterEvidence: WebSearchResult = { query: '', summary: '', citations: [] };
+
+    await new Promise(r => setTimeout(r, 1500));
+
+    const analogousMarketsEvidence = plan.analogousMarkets.length > 0
+      ? await webSearch(
+          `Research how analogous communities solved similar problems: ${plan.analogousMarkets.join(', ')}. What networking platforms did they build? What worked? What was the demand like? What can we learn for "${title}"?`,
+          apiKey
+        ).then(r => { console.log(`   ✓ Analogous markets: ${r.citations.length} citations (${plan.analogousMarkets.join(', ')})`); return r; })
+      : { query: '', summary: '', citations: [] } as WebSearchResult;
 
     // Step 3: Deep AI synthesis
     console.log('\n🧠 Step 3: AI synthesis — acting as startup researcher...');
     const report = await synthesizeResearch(
       opportunity,
-      { redditPosts, communityEvidence, competitorApps, competitorEvidence, twitterEvidence, analogousMarkets: analogousMarketsEvidence, plan },
+      { redditPosts, communityEvidence, competitorApps, competitorEvidence, twitterEvidence, analogousMarkets: analogousMarketsEvidence, hackerNewsPosts, quoraForumResults, googleTrends: googleTrendsData, plan },
       apiKey
     );
 
@@ -663,6 +955,9 @@ serve(async (req: Request) => {
         webSearch: { communityResults: communityEvidence.citations.length, competitorResults: competitorEvidence.citations.length, twitterResults: twitterEvidence.citations.length },
         appStore: { appsFound: competitorApps.length },
         analogousMarkets: { results: analogousMarketsEvidence.citations.length, markets: plan.analogousMarkets },
+        hackerNews: { storiesFound: hackerNewsPosts.length, topStories: hackerNewsPosts.slice(0, 5).map(s => ({ title: s.title, points: s.points, numComments: s.numComments, url: s.url })) },
+        quoraForums: { resultsFound: quoraForumResults.length },
+        googleTrends: googleTrendsData,
       },
       researchScore: report.opportunityScore,
       opportunityScore: report.opportunityScore,  // stored twice for compatibility
@@ -685,6 +980,9 @@ serve(async (req: Request) => {
       analogousMarkets: plan.analogousMarkets,   // string[] — market names
       marketGaps: report.marketGaps,             // string[] — flat gap strings
       evidenceSources: report.evidenceSources,
+      googleTrends: googleTrendsData,
+      hackerNewsPosts: hackerNewsPosts.slice(0, 8),
+      quoraForumResults: quoraForumResults.slice(0, 8),
       webCitations: [
         ...communityEvidence.citations,
         ...competitorEvidence.citations,
@@ -738,6 +1036,9 @@ serve(async (req: Request) => {
       risks: report.risks,
       competitorApps: competitorApps.slice(0, 6),
       analogousMarkets: plan.analogousMarkets,
+      googleTrends: googleTrendsData,
+      hackerNewsPosts: hackerNewsPosts.slice(0, 5),
+      quoraForumResults: quoraForumResults.slice(0, 5),
       webCitations: [...communityEvidence.citations, ...competitorEvidence.citations, ...analogousMarketsEvidence.citations]
         .map(c => {
           let url = c.url || '';

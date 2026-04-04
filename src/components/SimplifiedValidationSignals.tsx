@@ -129,7 +129,7 @@ export function SimplifiedValidationSignals({
       const [workflowRes, aiRes] = await Promise.all([
         supabase
           .from('validation_workflows')
-          .select('reddit_validation_results, automated_validation_results, automated_score, automated_recommendation')
+          .select('reddit_validation_results, automated_validation_results, automated_score, automated_recommendation, composite_score, status, last_signal_at')
           .eq('opportunity_id', opportunity.id)
           .single(),
         supabase
@@ -165,7 +165,8 @@ export function SimplifiedValidationSignals({
             webCitations: redditResults.webCitations || [],
             dataQuality: redditResults.dataQuality,
             totalDataPoints: redditResults.totalDataPoints,
-            evidenceSources: ['Reddit', 'Web Search', 'App Store', 'AI Research'],
+            evidenceSources: ['Reddit', 'HackerNews', 'Quora/Forums', 'Web Search', 'App Store', 'Google Trends', 'AI Research'],
+            googleTrends: redditResults.googleTrends || null,
             analysis: redditResults.analysis,
             sources: redditResults.sources,
           });
@@ -199,6 +200,25 @@ export function SimplifiedValidationSignals({
         const clientScore = computeClientScore(merged);
         const effectiveScore = dbScore > 0 ? dbScore : (clientScore > 0 ? clientScore : 0);
         setAiData({ ...merged, confidence_score: effectiveScore });
+      }
+
+      // Restore discussion extractor summary if previously persisted
+      const persistedSummary = redditResults?.discussionExtractorSummary;
+      if (hasData(persistedSummary)) {
+        setDiscussionSummary(persistedSummary);
+      }
+
+      // Restore results state so scores/status survive tab navigation
+      const compositeScore = workflowRes.data?.composite_score || 0;
+      const redditScore = redditResults?.researchScore ?? redditResults?.opportunityScore ?? 0;
+      if (compositeScore > 0 || workflowScore > 0 || redditScore > 0) {
+        setResults({
+          composite_score: compositeScore,
+          ai_score: workflowScore,
+          reddit_score: redditScore,
+          status: workflowRes.data?.status || 'needs_validation',
+          last_signal_at: workflowRes.data?.last_signal_at,
+        });
       }
     } catch (e) {
       // No persisted data
@@ -309,7 +329,8 @@ export function SimplifiedValidationSignals({
         }),
           dataQuality: rd.dataQuality,
           totalDataPoints: rd.totalDataPoints,
-          evidenceSources: ['Reddit', 'Web Search', 'App Store', 'AI Research'],
+          evidenceSources: ['Reddit', 'HackerNews', 'Quora/Forums', 'Web Search', 'App Store', 'Google Trends', 'AI Research'],
+          googleTrends: rd.googleTrends || null,
           analysis: rd.analysis,
           sources: rd.sources,
         });
@@ -332,7 +353,28 @@ export function SimplifiedValidationSignals({
         });
         if (extractResponse.data?.success) {
           if (extractResponse.data.discussions?.length) setDiscussions(extractResponse.data.discussions);
-          if (extractResponse.data.summary) setDiscussionSummary(extractResponse.data.summary);
+          if (extractResponse.data.summary) {
+            setDiscussionSummary(extractResponse.data.summary);
+            // Persist discussion summary into reddit_validation_results so it survives tab navigation
+            const { data: currentWf } = await supabase
+              .from('validation_workflows')
+              .select('reddit_validation_results')
+              .eq('opportunity_id', opportunity.id)
+              .single();
+            const existing = currentWf?.reddit_validation_results || {};
+            supabase
+              .from('validation_workflows')
+              .update({
+                reddit_validation_results: {
+                  ...existing,
+                  discussionExtractorSummary: extractResponse.data.summary,
+                },
+              })
+              .eq('opportunity_id', opportunity.id)
+              .then(({ error: persistErr }) => {
+                if (persistErr) console.warn('Failed to persist discussion summary:', persistErr);
+              });
+          }
         }
       } catch (e) {
         console.warn('Discussion extractor error:', e);
@@ -585,6 +627,8 @@ export function SimplifiedValidationSignals({
     uiToast({ title: 'Report copied', description: 'Validation report copied to clipboard' });
   };
 
+  const showChat = isCompleted && hasCommunityData;
+
   return (
     <div className="space-y-6">
 
@@ -672,6 +716,10 @@ export function SimplifiedValidationSignals({
 
         </CardContent>
       </Card>
+
+      {/* ── Two-column layout: Report (left) + Idea Coach chat (right) ── */}
+      <div className={showChat ? 'grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-6 items-start' : ''}>
+      <div className="space-y-6 min-w-0">
 
       {/* ── AI Recommendation ── */}
       {recommendation && (
@@ -858,6 +906,7 @@ export function SimplifiedValidationSignals({
             dataQuality={researchReportData.dataQuality}
             totalDataPoints={researchReportData.totalDataPoints ?? researchData?.totalDataPoints}
             evidenceSources={researchReportData.evidenceSources ?? []}
+            googleTrends={researchReportData.googleTrends ?? null}
             fullReport={researchReportData.fullReport}
             analysis={researchReportData.analysis ?? researchData?.analysis}
             sources={researchReportData.sources ?? researchData?.sources}
@@ -878,41 +927,105 @@ export function SimplifiedValidationSignals({
         )
       )}
 
-      {/* ── Idea Coach — Phase 1 ── */}
-      {isCompleted && hasCommunityData && (
-        <OpportunityChat
-          opportunityId={opportunity.id}
-          opportunityTitle={opportunity.title}
-          researchData={researchReportData ? {
-            opportunityScore: researchReportData.opportunityScore,
-            verdict: researchReportData.verdict,
-            painPoints: researchReportData.painPoints ?? [],
-            competitors: researchReportData.competitors ?? [],
-            marketGaps: researchReportData.marketGaps ?? [],
-          } : null}
-        />
-      )}
+      {/* ── Verdict & Next Steps CTA ── */}
+      {isCompleted && (hasCommunityData || hasAiData) && (() => {
+        const reportScore = researchReportData?.opportunityScore ?? discussionSummary?.opportunityScore ?? effectiveOverallScore;
+        const verdict = researchReportData?.verdict;
+        const verdictReason = researchReportData?.verdictReason;
+        const reportRecommendation = researchReportData?.recommendation ?? recommendation;
+        const isStrong = reportScore >= 70;
+        const isModerate = reportScore >= 45;
 
-      {/* ── Build CTA ── */}
-      {isCompleted && hasCommunityData && (discussionSummary?.opportunityScore ?? effectiveOverallScore) >= 50 && (
-        <Card className="border-green-200 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 dark:border-green-800">
-          <CardContent className="p-5">
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <Rocket className="h-5 w-5 text-green-600" />
-                <div>
-                  <div className="font-medium text-green-900 dark:text-green-300">Ready to build?</div>
-                  <div className="text-sm text-green-700 dark:text-green-400">
-                    Scored {discussionSummary?.opportunityScore ?? effectiveOverallScore}/100 — market signal is strong enough to move forward
+        const borderColor = isStrong
+          ? 'border-green-200 dark:border-green-800'
+          : isModerate
+            ? 'border-yellow-200 dark:border-yellow-800'
+            : 'border-red-200 dark:border-red-800';
+        const bgGradient = isStrong
+          ? 'bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20'
+          : isModerate
+            ? 'bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-950/20 dark:to-amber-950/20'
+            : 'bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-950/20 dark:to-orange-950/20';
+        const iconColor = isStrong ? 'text-green-600' : isModerate ? 'text-yellow-600' : 'text-red-500';
+        const titleColor = isStrong ? 'text-green-900 dark:text-green-300' : isModerate ? 'text-yellow-900 dark:text-yellow-300' : 'text-red-900 dark:text-red-300';
+        const textColor = isStrong ? 'text-green-700 dark:text-green-400' : isModerate ? 'text-yellow-700 dark:text-yellow-400' : 'text-red-700 dark:text-red-400';
+
+        return (
+          <Card className={`${borderColor} ${bgGradient}`}>
+            <CardContent className="p-5 space-y-3">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <Rocket className={`h-5 w-5 mt-0.5 ${iconColor}`} />
+                  <div>
+                    <div className={`font-semibold ${titleColor}`}>
+                      {isStrong ? 'Ready to Build' : isModerate ? 'Promising — Needs Focus' : 'Weak Signal — More Research Needed'}
+                    </div>
+                    <div className={`text-sm mt-1 ${textColor}`}>
+                      Scored <span className="font-bold">{reportScore}/100</span>
+                      {verdict && ` — ${verdict.charAt(0).toUpperCase() + verdict.slice(1)} market signal`}
+                    </div>
+                    {verdictReason && (
+                      <div className={`text-sm mt-1.5 ${textColor} opacity-90`}>
+                        {verdictReason}
+                      </div>
+                    )}
+                    {reportRecommendation && (
+                      <div className={`text-sm mt-2 font-medium ${titleColor}`}>
+                        Recommendation: <span className="font-normal opacity-90">{reportRecommendation}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
-              <Button size="sm" onClick={() => navigate(`/build?from=opportunity&id=${opportunity.id}`)}>
-                Build <ArrowRight className="h-4 w-4 ml-1" />
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+              {isModerate && (
+                <div className="flex gap-2 pt-1">
+                  <Button size="sm" onClick={() => navigate(`/build?from=opportunity&id=${opportunity.id}`)}>
+                    Build <ArrowRight className="h-4 w-4 ml-1" />
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={runAllSignals} disabled={isRunning}>
+                    <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Re-validate
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
+      </div>{/* end left column */}
+
+      {/* ── Idea Coach sticky sidebar ── */}
+      {showChat && (
+        <div className="hidden lg:block sticky top-20 h-[calc(100vh-6rem)] min-h-[400px]">
+          <OpportunityChat
+            opportunityId={opportunity.id}
+            opportunityTitle={opportunity.title}
+            researchData={researchReportData ? {
+              opportunityScore: researchReportData.opportunityScore,
+              verdict: researchReportData.verdict,
+              painPoints: researchReportData.painPoints ?? [],
+              competitors: researchReportData.competitors ?? [],
+              marketGaps: researchReportData.marketGaps ?? [],
+            } : null}
+          />
+        </div>
+      )}
+      </div>{/* end grid */}
+
+      {/* ── Mobile Idea Coach (below report on small screens) ── */}
+      {showChat && (
+        <div className="lg:hidden">
+          <OpportunityChat
+            opportunityId={opportunity.id}
+            opportunityTitle={opportunity.title}
+            researchData={researchReportData ? {
+              opportunityScore: researchReportData.opportunityScore,
+              verdict: researchReportData.verdict,
+              painPoints: researchReportData.painPoints ?? [],
+              competitors: researchReportData.competitors ?? [],
+              marketGaps: researchReportData.marketGaps ?? [],
+            } : null}
+          />
+        </div>
       )}
     </div>
   );

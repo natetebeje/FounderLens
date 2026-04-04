@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, ChevronUp, ChevronDown, Sparkles, Loader2, FileText, Bot, User } from 'lucide-react';
+import { Send, Sparkles, Loader2, FileText, Bot, User, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
-import { ProductProposalModal } from './ProductProposalModal';
 
 // ============================================================================
 // TYPES
@@ -41,6 +40,96 @@ function extractProposalJson(content: string): object | null {
 function renderMessageContent(content: string): string {
   // Strip the raw JSON block from displayed messages — it will be shown in the modal
   return content.replace(/```proposal-json[\s\S]*?```/g, '').trim();
+}
+
+function generateProposalPdf(proposal: any, title: string) {
+  const p = proposal;
+  const esc = (s: string) => s?.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') ?? '';
+  const list = (items: string[] | undefined, marker = '•') =>
+    items?.map(i => `<li>${marker} ${esc(i)}</li>`).join('') ?? '';
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${esc(p.productName || title)} — Product Proposal</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1a1a2e; padding: 48px; line-height: 1.6; max-width: 800px; margin: 0 auto; }
+  h1 { font-size: 28px; margin-bottom: 4px; color: #1a1a2e; }
+  .oneliner { font-size: 15px; color: #555; margin-bottom: 6px; }
+  .tagline { font-size: 16px; color: #444; font-style: italic; margin-bottom: 24px; }
+  .score-badge { display: inline-block; padding: 3px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 20px; }
+  .score-high { background: #d1fae5; color: #065f46; }
+  .score-mid { background: #fef3c7; color: #92400e; }
+  .score-low { background: #fee2e2; color: #991b1b; }
+  h2 { font-size: 18px; color: #312e81; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #e0e7ff; }
+  h3 { font-size: 14px; color: #6366f1; text-transform: uppercase; letter-spacing: 0.5px; margin: 14px 0 6px; }
+  p { margin-bottom: 8px; font-size: 14px; }
+  ul, ol { margin: 6px 0 12px 20px; font-size: 14px; }
+  li { margin-bottom: 4px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0 16px; }
+  .grid-box { background: #f5f3ff; border-radius: 8px; padding: 12px; }
+  .grid-box .label { font-size: 11px; color: #6b7280; text-transform: uppercase; }
+  .grid-box .value { font-size: 15px; font-weight: 600; color: #1e1b4b; }
+  .highlight { background: #eef2ff; border-left: 3px solid #6366f1; padding: 10px 14px; border-radius: 4px; margin: 8px 0; font-size: 14px; }
+  .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #9ca3af; }
+  @media print { body { padding: 24px; } }
+</style></head><body>
+<h1>${esc(p.productName || title)}</h1>
+${p.oneLiner ? `<p class="oneliner">${esc(p.oneLiner)}</p>` : ''}
+${p.tagline ? `<p class="tagline">"${esc(p.tagline)}"</p>` : ''}
+${p.researchBacking?.opportunityScore ? `<span class="score-badge ${p.researchBacking.opportunityScore >= 70 ? 'score-high' : p.researchBacking.opportunityScore >= 45 ? 'score-mid' : 'score-low'}">${p.researchBacking.opportunityScore}/100 Opportunity Score</span>` : ''}
+
+${p.problemStatement ? `<h2>Problem Statement</h2><p>${esc(p.problemStatement)}</p>` : ''}
+
+${p.targetUser ? `<h2>Target User</h2>
+${p.targetUser.persona ? `<p><strong>Persona:</strong> ${esc(p.targetUser.persona)}</p>` : ''}
+${p.targetUser.painPoints?.length ? `<h3>Pain Points</h3><ul>${list(p.targetUser.painPoints)}</ul>` : ''}
+${p.targetUser.jobsToBeDone?.length ? `<h3>Jobs to Be Done</h3><ul>${list(p.targetUser.jobsToBeDone)}</ul>` : ''}
+${p.targetUser.currentAlternatives?.length ? `<h3>Current Alternatives</h3><ul>${list(p.targetUser.currentAlternatives)}</ul>` : ''}` : ''}
+
+${p.marketOpportunity ? `<h2>Market Opportunity</h2>
+<div class="grid">
+${p.marketOpportunity.targetMarketSize ? `<div class="grid-box"><div class="label">Total Market (TAM)</div><div class="value">${esc(p.marketOpportunity.targetMarketSize)}</div></div>` : ''}
+${p.marketOpportunity.serviceableMarket ? `<div class="grid-box"><div class="label">Serviceable Market (SAM)</div><div class="value">${esc(p.marketOpportunity.serviceableMarket)}</div></div>` : ''}
+</div>
+${p.marketOpportunity.competitorGaps?.length ? `<h3>Competitor Gaps</h3><ul>${list(p.marketOpportunity.competitorGaps, '▲')}</ul>` : ''}` : ''}
+
+${p.solution ? `<h2>Solution</h2>
+${p.solution.uniqueDifferentiator ? `<div class="highlight"><strong>Differentiator:</strong> ${esc(p.solution.uniqueDifferentiator)}</div>` : ''}
+${p.solution.unfairAdvantage ? `<div class="highlight"><strong>Unfair Advantage:</strong> ${esc(p.solution.unfairAdvantage)}</div>` : ''}
+${p.solution.coreFeatures?.length ? `<h3>Core Features</h3><ol>${p.solution.coreFeatures.map((f: string) => `<li>${esc(f)}</li>`).join('')}</ol>` : ''}` : ''}
+
+${p.mvpScope ? `<h2>MVP Scope</h2>
+${p.mvpScope.mustHave?.length ? `<h3>Must Have (v1)</h3><ul>${list(p.mvpScope.mustHave, '✓')}</ul>` : ''}
+${p.mvpScope.niceToHave?.length ? `<h3>Nice to Have (v2)</h3><ul>${list(p.mvpScope.niceToHave, '○')}</ul>` : ''}
+${p.mvpScope.outOfScope?.length ? `<h3>Out of Scope</h3><ul>${list(p.mvpScope.outOfScope, '✗')}</ul>` : ''}` : ''}
+
+${p.monetization ? `<h2>Monetization</h2>
+${p.monetization.model ? `<p><strong>Model:</strong> ${esc(p.monetization.model)}</p>` : ''}
+${p.monetization.pricing ? `<p><strong>Pricing:</strong> ${esc(p.monetization.pricing)}</p>` : ''}
+${p.monetization.rationale ? `<p>${esc(p.monetization.rationale)}</p>` : ''}` : ''}
+
+${p.goToMarket ? `<h2>Go-to-Market</h2>
+${p.goToMarket.primaryChannel ? `<div class="highlight"><strong>Primary Channel:</strong> ${esc(p.goToMarket.primaryChannel)}</div>` : ''}
+${p.goToMarket.launchStrategy ? `<p>${esc(p.goToMarket.launchStrategy)}</p>` : ''}
+${p.goToMarket.first30Days ? `<h3>First 30 Days</h3><p>${esc(p.goToMarket.first30Days)}</p>` : ''}` : ''}
+
+${p.risks?.length ? `<h2>Key Risks</h2><ul>${list(p.risks, '⚠')}</ul>` : ''}
+
+${p.nextSteps?.length ? `<h2>Next Steps</h2><ol>${p.nextSteps.map((s: string) => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}
+
+<div class="footer">
+  Generated by FounderLens Idea Coach
+  ${p.researchBacking ? ` · Score: ${p.researchBacking.opportunityScore || 'N/A'}/100 · ${p.researchBacking.dataPoints || 0} data points` : ''}
+</div>
+</body></html>`;
+
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) return;
+  printWindow.document.write(html);
+  printWindow.document.close();
+  printWindow.onload = () => {
+    printWindow.print();
+  };
 }
 
 // ============================================================================
@@ -128,12 +217,11 @@ function useStreamingChat(opportunityId: string) {
 // ============================================================================
 
 export function OpportunityChat({ opportunityId, opportunityTitle, researchData }: OpportunityChatProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [streamingContent, setStreamingContent] = useState('');
   const [proposal, setProposal] = useState<object | null>(null);
-  const [showProposalModal, setShowProposalModal] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [hasLoadedHistory, setHasLoadedHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -252,25 +340,25 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
       mode,
       (token) => setStreamingContent(prev => prev + token),
       (fullText) => {
-        setStreamingContent('');
         setMessages(prev => prev.map(m =>
-          m.id === streamingId ? { ...m, content: fullText } : m
+          m.id === streamingId ? { ...m, id: `msg-${Date.now()}`, content: fullText } : m
         ));
+        setStreamingContent('');
 
         // Extract proposal if present
         const extracted = extractProposalJson(fullText);
         if (extracted) {
           setProposal(extracted);
-          setShowProposalModal(true);
+          generateProposalPdf(extracted, opportunityTitle);
         }
       },
       (err) => {
-        setStreamingContent('');
         setMessages(prev => prev.map(m =>
           m.id === streamingId
-            ? { ...m, content: `Sorry, something went wrong: ${err}` }
+            ? { ...m, id: `msg-error-${Date.now()}`, content: `Sorry, something went wrong: ${err}` }
             : m
         ));
+        setStreamingContent('');
       }
     );
   }, [input, isStreaming, sendMessage]);
@@ -284,123 +372,96 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
 
   return (
     <>
-      {/* Collapsible Panel */}
-      <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 backdrop-blur-sm overflow-hidden">
-        {/* Header — always visible */}
-        <button
-          onClick={() => setIsOpen(prev => !prev)}
-          className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/5 transition-colors"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-indigo-400" />
+      <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden flex flex-col h-full">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/50">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-full bg-indigo-100 dark:bg-indigo-500/20 flex items-center justify-center">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
             </div>
-            <div className="text-left">
-              <div className="text-sm font-semibold text-white">Idea Coach</div>
-              <div className="text-xs text-white/50">
+            <div>
+              <div className="text-sm font-semibold text-foreground">Idea Coach</div>
+              <div className="text-[11px] text-muted-foreground">
                 {proposal
-                  ? 'Product Proposal ready — click to view'
+                  ? 'Product Proposal ready'
                   : userMessageCount === 0
-                    ? 'Chat with AI to structure your idea'
-                    : `${userMessageCount} exchange${userMessageCount !== 1 ? 's' : ''} · ${showProposalButton ? 'Proposal ready to generate' : `${3 - userMessageCount} more to unlock proposal`}`}
+                    ? 'Structure your idea'
+                    : `${userMessageCount} exchange${userMessageCount !== 1 ? 's' : ''}`}
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {proposal && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setShowProposalModal(true); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500/20 text-indigo-300 text-xs font-medium hover:bg-indigo-500/30 transition-colors"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                View Proposal
-              </button>
-            )}
-            {isOpen ? (
-              <ChevronDown className="w-4 h-4 text-white/40" />
-            ) : (
-              <ChevronUp className="w-4 h-4 text-white/40" />
-            )}
-          </div>
-        </button>
+          {proposal && (
+            <button
+              onClick={() => generateProposalPdf(proposal, opportunityTitle)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-200 dark:hover:bg-indigo-500/30 transition-colors"
+            >
+              <Download className="w-3 h-3" />
+              Download PDF
+            </button>
+          )}
+        </div>
 
-        {/* Chat Panel */}
-        {isOpen && (
-          <div className="border-t border-white/10">
-            {/* Messages */}
-            <div className="h-80 overflow-y-auto px-4 py-4 space-y-4 scroll-smooth">
-              {isLoadingHistory ? (
-                <div className="flex items-center justify-center h-full">
-                  <Loader2 className="w-5 h-5 text-white/40 animate-spin" />
-                </div>
-              ) : (
-                <>
-                  {messages.map((msg) => (
-                    <MessageBubble
-                      key={msg.id}
-                      role={msg.role}
-                      content={msg.id.startsWith('streaming-') ? streamingContent : msg.content}
-                      isStreaming={msg.id.startsWith('streaming-') && isStreaming}
-                    />
-                  ))}
-                  <div ref={messagesEndRef} />
-                </>
-              )}
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 scroll-smooth min-h-0 bg-background/50">
+          {isLoadingHistory ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-5 h-5 text-muted-foreground animate-spin" />
             </div>
-
-            {/* Input */}
-            <div className="border-t border-white/10 p-4">
-              <div className="flex gap-2">
-                <Textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Ask a question or share your thinking..."
-                  className="min-h-[44px] max-h-32 resize-none bg-white/5 border-white/10 text-white placeholder:text-white/30 text-sm focus:border-indigo-500/50 focus:ring-indigo-500/20"
-                  disabled={isStreaming}
+          ) : (
+            <>
+              {messages.map((msg) => (
+                <MessageBubble
+                  key={msg.id}
+                  role={msg.role}
+                  content={msg.id.startsWith('streaming-') ? streamingContent : msg.content}
+                  isStreaming={msg.id.startsWith('streaming-') && isStreaming}
+                  onDownloadPdf={proposal ? () => generateProposalPdf(proposal, opportunityTitle) : undefined}
                 />
-                <div className="flex flex-col gap-2">
-                  <Button
-                    onClick={() => handleSend('chat')}
-                    disabled={!input.trim() || isStreaming}
-                    size="icon"
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white shrink-0"
-                  >
-                    {isStreaming ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Send className="w-4 h-4" />
-                    )}
-                  </Button>
-                </div>
-              </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </>
+          )}
+        </div>
 
-              {/* Generate Proposal CTA */}
-              {showProposalButton && (
-                <button
-                  onClick={() => proposal ? setShowProposalModal(true) : handleSend('generate_proposal')}
-                  disabled={isStreaming}
-                  className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600/30 to-purple-600/30 border border-indigo-500/30 text-indigo-300 text-sm font-medium hover:from-indigo-600/40 hover:to-purple-600/40 transition-all disabled:opacity-50"
-                >
-                  <FileText className="w-4 h-4" />
-                  {proposal ? 'View Product Proposal' : 'Generate Product Proposal'}
-                </button>
+        {/* Input */}
+        <div className="border-t border-border p-3 bg-muted/30">
+          <div className="flex gap-2">
+            <Textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask a question..."
+              className="min-h-[40px] max-h-28 resize-none bg-background border-border text-foreground placeholder:text-muted-foreground text-sm focus:border-indigo-500/50 focus:ring-indigo-500/20"
+              disabled={isStreaming}
+            />
+            <Button
+              onClick={() => handleSend('chat')}
+              disabled={!input.trim() || isStreaming}
+              size="icon"
+              className="bg-indigo-600 hover:bg-indigo-500 text-white shrink-0"
+            >
+              {isStreaming ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
               )}
-            </div>
+            </Button>
           </div>
-        )}
+
+          {showProposalButton && (
+            <button
+              onClick={() => proposal ? generateProposalPdf(proposal, opportunityTitle) : handleSend('generate_proposal')}
+              disabled={isStreaming}
+              className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-100 dark:bg-gradient-to-r dark:from-indigo-600/30 dark:to-purple-600/30 border border-indigo-300 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-200 dark:hover:from-indigo-600/40 dark:hover:to-purple-600/40 transition-all disabled:opacity-50"
+            >
+              {proposal ? <Download className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
+              {proposal ? 'Download Proposal PDF' : 'Generate Product Proposal'}
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Proposal Modal */}
-      {showProposalModal && proposal && (
-        <ProductProposalModal
-          proposal={proposal as any}
-          opportunityTitle={opportunityTitle}
-          opportunityId={opportunityId}
-          onClose={() => setShowProposalModal(false)}
-        />
-      )}
     </>
   );
 }
@@ -413,52 +474,57 @@ function MessageBubble({
   role,
   content,
   isStreaming,
+  onDownloadPdf,
 }: {
   role: 'user' | 'assistant';
   content: string;
   isStreaming?: boolean;
+  onDownloadPdf?: () => void;
 }) {
   const displayContent = renderMessageContent(content);
   const hasProposal = content.includes('```proposal-json');
 
   return (
-    <div className={`flex gap-3 ${role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+    <div className={`flex gap-2.5 ${role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
       {/* Avatar */}
       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
         role === 'assistant'
-          ? 'bg-indigo-500/20'
-          : 'bg-white/10'
+          ? 'bg-indigo-100 dark:bg-indigo-500/20'
+          : 'bg-gray-100 dark:bg-white/10'
       }`}>
         {role === 'assistant' ? (
-          <Bot className="w-3.5 h-3.5 text-indigo-400" />
+          <Bot className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
         ) : (
-          <User className="w-3.5 h-3.5 text-white/60" />
+          <User className="w-3.5 h-3.5 text-gray-500 dark:text-white/60" />
         )}
       </div>
 
       {/* Bubble */}
-      <div className={`max-w-[82%] ${role === 'user' ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
+      <div className={`max-w-[85%] ${role === 'user' ? 'items-end' : 'items-start'} flex flex-col gap-1`}>
         <div className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
           role === 'assistant'
-            ? 'bg-white/5 text-white/90 rounded-tl-sm'
-            : 'bg-indigo-600/30 text-white rounded-tr-sm'
+            ? 'bg-muted text-foreground rounded-tl-sm'
+            : 'bg-indigo-600 dark:bg-indigo-600/80 text-white rounded-tr-sm'
         }`}>
           {displayContent || (isStreaming ? (
             <span className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              <span className="w-1.5 h-1.5 bg-indigo-500 dark:bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-1.5 h-1.5 bg-indigo-500 dark:bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="w-1.5 h-1.5 bg-indigo-500 dark:bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
             </span>
           ) : '')}
           {isStreaming && displayContent && (
-            <span className="inline-block w-0.5 h-4 bg-indigo-400 ml-0.5 animate-pulse align-middle" />
+            <span className="inline-block w-0.5 h-4 bg-indigo-500 dark:bg-indigo-400 ml-0.5 animate-pulse align-middle" />
           )}
         </div>
-        {hasProposal && (
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs">
-            <FileText className="w-3 h-3" />
-            Product Proposal generated — click "View Proposal" above
-          </div>
+        {hasProposal && onDownloadPdf && (
+          <button
+            onClick={onDownloadPdf}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-100 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-200 dark:hover:bg-indigo-500/20 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download Product Proposal PDF
+          </button>
         )}
       </div>
     </div>

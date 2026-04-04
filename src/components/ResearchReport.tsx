@@ -9,12 +9,22 @@ import {
   CheckCircle2, XCircle, AlertCircle, BookOpen, Smartphone,
   Globe, Users, Lightbulb, BarChart3, ArrowUpRight,
 } from 'lucide-react';
+import { GoogleTrendsChart } from './GoogleTrendsChart';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Competitor { name: string; description: string; gap: string }
 interface AppStoreApp { name: string; rating: number; ratingCount: number; description: string; platform: string; url: string }
 interface Citation { title: string; url: string }
+
+interface GoogleTrendsData {
+  trend: 'up' | 'down' | 'stable';
+  score: number;
+  searchVolume?: number;
+  relatedQueries: string[];
+  isRealData: boolean;
+  trendHistory?: { date: string; value: number }[];
+}
 
 interface ResearchReportProps {
   opportunityTitle?: string;
@@ -38,6 +48,8 @@ interface ResearchReportProps {
   dataQuality?: 'rich' | 'moderate' | 'sparse';
   totalDataPoints?: number;
   evidenceSources?: string[];
+  // Google Trends
+  googleTrends?: GoogleTrendsData;
   // Full report
   fullReport?: string;
   // Legacy fields
@@ -112,13 +124,14 @@ export const ResearchReport: React.FC<ResearchReportProps> = ({
   dataQuality,
   totalDataPoints = 0,
   evidenceSources = [],
+  googleTrends,
   fullReport,
   analysis,
   sources,
   researchScore,
   className = '',
 }) => {
-  const [showFullReport, setShowFullReport] = useState(false);
+  const [showFullReport, setShowFullReport] = useState(true);
   const [showAllCitations, setShowAllCitations] = useState(false);
 
   // Normalise — handle both new and legacy shapes
@@ -179,46 +192,43 @@ export const ResearchReport: React.FC<ResearchReportProps> = ({
             )}
           </div>
 
-          {/* Quick findings — 3 columns */}
+          {/* Quick findings — 3 columns with text snippets */}
           <div className="grid grid-cols-3 gap-3 mb-4 text-xs">
             <div className="bg-background/60 rounded-lg p-2.5 border border-border/50">
               <div className="font-semibold text-green-600 dark:text-green-400 mb-1 flex items-center gap-1">
                 <Zap className="w-3 h-3" /> Demand Signals
               </div>
               <div className="text-muted-foreground">{signals.length} found</div>
+              {signals[0] && (
+                <div className="text-[10px] text-foreground/60 mt-1 line-clamp-2">{signals[0].slice(0, 80)}{signals[0].length > 80 ? '...' : ''}</div>
+              )}
             </div>
             <div className="bg-background/60 rounded-lg p-2.5 border border-border/50">
               <div className="font-semibold text-orange-500 mb-1 flex items-center gap-1">
                 <Smartphone className="w-3 h-3" /> Competitors
               </div>
               <div className="text-muted-foreground">{comps.length + competitorApps.length} found</div>
+              {(comps[0] || competitorApps[0]) && (
+                <div className="text-[10px] text-foreground/60 mt-1 line-clamp-2">{comps[0]?.name || competitorApps[0]?.name}</div>
+              )}
             </div>
             <div className="bg-background/60 rounded-lg p-2.5 border border-border/50">
               <div className="font-semibold text-blue-500 mb-1 flex items-center gap-1">
                 <Globe className="w-3 h-3" /> Web Sources
               </div>
               <div className="text-muted-foreground">{webCitations.length} cited</div>
+              {webCitations[0] && (
+                <div className="text-[10px] text-foreground/60 mt-1 line-clamp-2">{webCitations[0].title?.slice(0, 60)}</div>
+              )}
             </div>
           </div>
 
           {/* View full report button */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            onClick={() => setShowFullReport(v => !v)}
-          >
-            {showFullReport ? (
-              <><ChevronUp className="w-4 h-4 mr-2" /> Hide Full Report</>
-            ) : (
-              <><BookOpen className="w-4 h-4 mr-2" /> View Full Research Report</>
-            )}
-          </Button>
         </CardContent>
       </Card>
 
-      {/* ── Full Report (expandable) ── */}
-      {showFullReport && (
+      {/* ── Full Report (always shown) ── */}
+      {(
         <div className="space-y-4">
 
           {/* Demand Signals */}
@@ -237,6 +247,28 @@ export const ResearchReport: React.FC<ResearchReportProps> = ({
                     <span className="text-foreground/80">{s}</span>
                   </div>
                 ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Google Trends */}
+          {googleTrends && (googleTrends.score > 0 || (googleTrends.trendHistory?.length ?? 0) > 0) && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <BarChart3 className="w-4 h-4 text-blue-500" />
+                  Google Trends — Search Demand
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <GoogleTrendsChart
+                  trendHistory={googleTrends.trendHistory || []}
+                  trend={googleTrends.trend}
+                  score={googleTrends.score}
+                  searchVolume={googleTrends.searchVolume}
+                  relatedQueries={googleTrends.relatedQueries}
+                  isRealData={googleTrends.isRealData}
+                />
               </CardContent>
             </Card>
           )}
