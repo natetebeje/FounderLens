@@ -148,7 +148,7 @@ const App = () => (
                       <Route path="/team" element={<ProtectedRoute requireWorkspace><Team /></ProtectedRoute>} />
                       <Route path="/enterprise" element={<Enterprise />} />
                       <Route path="/validation/:opportunityId" element={<ProtectedRoute requireWorkspace><ValidationWorkflow /></ProtectedRoute>} />
-                      <Route path="/companies" element={<ProtectedRoute requireWorkspace><Companies /></ProtectedRoute>} />
+                      <Route path="/companies" element={<ProtectedRoute requireWorkspace><BuildLab /></ProtectedRoute>} />
                       <Route path="/about" element={<About />} />
                       <Route path="/blog" element={<Blog />} />
                       <Route path="/careers" element={<Careers />} />

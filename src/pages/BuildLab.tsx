@@ -12,7 +12,8 @@ import { useSubscription } from "@/hooks/useSubscription";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Crown } from "lucide-react";
+import { Crown, Building2, BookOpen } from "lucide-react";
+import { AICompaniesTab } from "@/components/AICompaniesTab";
 
 interface BuildTrack {
   id: string;
@@ -31,8 +32,10 @@ interface BuildTrack {
   };
 }
 
+type BuildTab = 'companies' | 'learn';
+
 const BuildLab = () => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const [tracks, setTracks] = useState<BuildTrack[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,11 +45,17 @@ const BuildLab = () => {
   const { subscribed } = useSubscription();
   const { user } = useAuth();
 
+  // Active tab — default to 'companies', switchable via ?tab= param
+  const activeTab: BuildTab = (searchParams.get('tab') as BuildTab) || 'companies';
+  const setActiveTab = (tab: BuildTab) => {
+    setSearchParams(tab === 'companies' ? {} : { tab });
+  };
+
   // Handle auto-redirect from opportunities
   useEffect(() => {
     const fromSource = searchParams.get('from');
     const opportunityId = searchParams.get('id');
-    
+
     if (fromSource === 'opportunity' && opportunityId) {
       const buildTrack = getBuildTrackForOpportunity(opportunityId);
       if (buildTrack) {
@@ -60,16 +69,12 @@ const BuildLab = () => {
     const fetchTracks = async () => {
       try {
         setLoading(true);
-        
         const { data, error } = await supabase
           .from('build_tracks')
-          .select(`
-            *,
-            build_lessons(count)
-          `)
+          .select(`*, build_lessons(count)`)
           .eq('is_published', true)
           .order('sort_order', { ascending: true });
-        
+
         if (error) throw error;
 
         const transformedTracks = data?.map(track => ({
@@ -93,99 +98,136 @@ const BuildLab = () => {
     fetchTracks();
   }, [toast]);
 
-  // Filter tracks based on search and difficulty
   const filteredTracks = useMemo(() => {
     return tracks.filter(track => {
-      const matchesSearch = track.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           track.description.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesDifficulty = difficultyFilter === "all" || 
-                               track.difficulty_level.toLowerCase() === difficultyFilter.toLowerCase();
+      const matchesSearch =
+        track.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        track.description.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesDifficulty =
+        difficultyFilter === "all" ||
+        track.difficulty_level.toLowerCase() === difficultyFilter.toLowerCase();
       return matchesSearch && matchesDifficulty;
     });
   }, [tracks, searchTerm, difficultyFilter]);
 
-  if (loading) {
-    return (
-      <ModernContainer>
-        <BuildLabSkeleton />
-      </ModernContainer>
-    );
-  }
-
-  // Premium gating for authenticated users
-  if (user && !subscribed) {
-    return (
-      <ModernContainer>
-        <div className="space-y-12">
-          <BuildHeroSimple />
-          
-          {/* Premium gate */}
-          <div className="max-w-4xl mx-auto">
-            <Card className="border-primary/20 bg-gradient-subtle">
-              <CardHeader className="text-center">
-                <div className="flex justify-center mb-4">
-                  <Crown className="h-12 w-12 text-primary" />
-                </div>
-                <CardTitle className="text-2xl mb-2">
-                  Unlock Premium Build Courses
-                </CardTitle>
-                <CardDescription className="text-lg">
-                  Get access to step-by-step video courses that guide you through building successful businesses.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="text-center space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
-                  <div className="space-y-2">
-                    <h4 className="font-semibold">Expert-Led Videos</h4>
-                    <p className="text-sm text-muted-foreground">Learn from successful founders and experts</p>
-                  </div>
-                  <div className="space-y-2">
-                    <h4 className="font-semibold">Step-by-Step</h4>
-                    <p className="text-sm text-muted-foreground">Clear, actionable lessons you can follow</p>
-                  </div>
-                  <div className="space-y-2">
-                    <h4 className="font-semibold">Real Examples</h4>
-                    <p className="text-sm text-muted-foreground">Templates and case studies included</p>
-                  </div>
-                </div>
-                
-                <Button 
-                  size="lg" 
-                  onClick={() => navigate("/pricing")}
-                  className="bg-primary hover:bg-primary/90"
-                >
-                  <Crown className="w-4 h-4 mr-2" />
-                  Upgrade to Premium
-                </Button>
-                
-                <p className="text-sm text-muted-foreground">
-                  Preview a few lessons below or upgrade for full access
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-          
-          {/* Show limited tracks for preview */}
-          <BuildTracksGrid tracks={tracks.slice(0, 2)} showSeeAllButton />
-        </div>
-      </ModernContainer>
-    );
-  }
-
   return (
     <ModernContainer>
-      <div className="space-y-12">
-        <BuildHeroSimple />
-        <BuildFilters 
-          searchTerm={searchTerm}
-          onSearchChange={setSearchTerm}
-          difficultyFilter={difficultyFilter}
-          onDifficultyChange={setDifficultyFilter}
-        />
-        <BuildTracksGrid tracks={filteredTracks} showSeeAllButton />
+      <div className="space-y-6">
+
+        {/* ── Tab bar ── */}
+        <div className="flex items-center gap-1 border-b border-border pb-0">
+          <TabButton
+            active={activeTab === 'companies'}
+            onClick={() => setActiveTab('companies')}
+            icon={<Building2 className="w-4 h-4" />}
+            label="My Companies"
+          />
+          <TabButton
+            active={activeTab === 'learn'}
+            onClick={() => setActiveTab('learn')}
+            icon={<BookOpen className="w-4 h-4" />}
+            label="Learn"
+          />
+        </div>
+
+        {/* ── My Companies tab ── */}
+        {activeTab === 'companies' && (
+          <AICompaniesTab />
+        )}
+
+        {/* ── Learn tab ── */}
+        {activeTab === 'learn' && (
+          <div className="space-y-12">
+            <BuildHeroSimple />
+
+            {loading ? (
+              <BuildLabSkeleton />
+            ) : user && !subscribed ? (
+              /* Premium gate */
+              <div className="max-w-4xl mx-auto">
+                <Card className="border-primary/20 bg-gradient-subtle">
+                  <CardHeader className="text-center">
+                    <div className="flex justify-center mb-4">
+                      <Crown className="h-12 w-12 text-primary" />
+                    </div>
+                    <CardTitle className="text-2xl mb-2">
+                      Unlock Premium Build Courses
+                    </CardTitle>
+                    <CardDescription className="text-lg">
+                      Get access to step-by-step video courses that guide you through building successful businesses.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="text-center space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
+                      <div className="space-y-2">
+                        <h4 className="font-semibold">Expert-Led Videos</h4>
+                        <p className="text-sm text-muted-foreground">Learn from successful founders and experts</p>
+                      </div>
+                      <div className="space-y-2">
+                        <h4 className="font-semibold">Step-by-Step</h4>
+                        <p className="text-sm text-muted-foreground">Clear, actionable lessons you can follow</p>
+                      </div>
+                      <div className="space-y-2">
+                        <h4 className="font-semibold">Real Examples</h4>
+                        <p className="text-sm text-muted-foreground">Templates and case studies included</p>
+                      </div>
+                    </div>
+                    <Button
+                      size="lg"
+                      onClick={() => navigate("/pricing")}
+                      className="bg-primary hover:bg-primary/90"
+                    >
+                      <Crown className="w-4 h-4 mr-2" />
+                      Upgrade to Premium
+                    </Button>
+                    <p className="text-sm text-muted-foreground">
+                      Preview a few lessons below or upgrade for full access
+                    </p>
+                  </CardContent>
+                </Card>
+                <BuildTracksGrid tracks={tracks.slice(0, 2)} showSeeAllButton />
+              </div>
+            ) : (
+              <>
+                <BuildFilters
+                  searchTerm={searchTerm}
+                  onSearchChange={setSearchTerm}
+                  difficultyFilter={difficultyFilter}
+                  onDifficultyChange={setDifficultyFilter}
+                />
+                <BuildTracksGrid tracks={filteredTracks} showSeeAllButton />
+              </>
+            )}
+          </div>
+        )}
       </div>
     </ModernContainer>
   );
 };
+
+// ─── Tab button ───────────────────────────────────────────────────────────────
+
+function TabButton({
+  active, onClick, icon, label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
+        active
+          ? 'border-primary text-foreground'
+          : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
 
 export default BuildLab;
