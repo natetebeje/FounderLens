@@ -1015,6 +1015,28 @@ serve(async (req: Request) => {
       })
       .eq('opportunity_id', opportunityId);
 
+    // ── Post-launch webhook: ping CEO agent with new research signals ─────────
+    // Fires asynchronously (best-effort). If the opportunity has an AI company
+    // launched on build.founderlens.io, the CEO gets a briefing issue + heartbeat.
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+    fetch(`${supabaseUrl}/functions/v1/notify-ceo-new-signals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+      },
+      body: JSON.stringify({
+        opportunityId,
+        researchSummary: report.briefSummary,
+      }),
+    }).then(r => {
+      if (r.ok) r.json().then(d => {
+        if (d.skipped) console.log(`CEO webhook skipped: ${d.reason}`);
+        else console.log(`CEO notified: issue=${d.briefingIssueId}, heartbeat=${d.heartbeatTriggered}`);
+      });
+    }).catch(e => console.warn('CEO webhook failed (non-fatal):', e.message));
+    // ─────────────────────────────────────────────────────────────────────────
+
     return new Response(JSON.stringify({
       success: true,
       researchScore: report.opportunityScore,
