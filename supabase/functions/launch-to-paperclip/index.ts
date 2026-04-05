@@ -139,7 +139,7 @@ serve(async (req: Request) => {
       title: `Launch ${productName} and reach first 100 paying customers`,
       description: `## Mission\n${oneLiner}\n\n## Why This Matters\n${problem}\n\n## Success Criteria\n- MVP shipped covering all validated must-haves\n- 10 paying customers before adding v2 features\n- Primary acquisition channel (${primaryCh}) showing consistent conversion\n\n## Research Backing\n- Opportunity Score: ${score}/100\n- Data Points: ${dataPoints}\n- Differentiator: ${differentiator}`,
       level: 'company',
-      status: 'active',
+      status: 'in_progress', // Paperclip: backlog|planned|in_progress|completed|cancelled
     });
     console.log(`Goal created: ${goal.id}`);
 
@@ -151,13 +151,13 @@ serve(async (req: Request) => {
         name: 'MVP',
         description: `Build the minimum viable product for ${productName}.\n\nValidated must-haves:\n${list(mustHaves)}\n\nShip these in order of user pain intensity. First paying customer before any v2 features.`,
         goalIds: [goal.id],
-        status: 'active',
+        status: 'planned',
       }),
       pc('POST', `/companies/${companyId}/projects`, {
         name: 'Marketing',
         description: `Reach the first 100 target users and convert 10 to paying customers.\n\nPrimary channel: ${primaryCh}\nAll channels:\n${list(channels)}\n\nTarget user: ${persona}`,
         goalIds: [goal.id],
-        status: 'active',
+        status: 'planned',
       }),
       pc('POST', `/companies/${companyId}/projects`, {
         name: 'Operations',
@@ -222,7 +222,7 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
 
       pc('POST', `/companies/${companyId}/agents`, {
         name: 'CTO',
-        role: 'manager',
+        role: 'cto',  // Paperclip: ceo|cto|cmo|cfo|engineer|designer|pm|qa|devops|researcher|general
         title: `CTO of ${productName}`,
         reportsTo: ceo.id,
         capabilities: `Technical architecture, MVP scoping, engineering direction, code review, ADR writing. Builds lean, ship-fast systems for ${opp.target_market}.`,
@@ -254,7 +254,7 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
 
       pc('POST', `/companies/${companyId}/agents`, {
         name: 'CMO',
-        role: 'manager',
+        role: 'cmo',
         title: `CMO of ${productName}`,
         reportsTo: ceo.id,
         capabilities: `Brand strategy, content creation, go-to-market execution, community outreach, campaign planning for ${opp.target_market}.`,
@@ -295,7 +295,7 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
       title: feature,
       description: `## Feature: ${feature}\n\nThis feature was identified as a validated must-have by the FounderLens research engine.\n\n**Why it matters:**\n${painPoints[i] || `Addresses a core pain point for ${persona}`}\n\n**Acceptance criteria:**\n- Feature works end-to-end for the target user\n- No critical bugs at launch\n- At least 1 real user has tested it\n\n**Priority:** Build this before anything in the nice-to-have list.`,
       status: 'todo',
-      priority: i === 0 ? 'urgent' : i === 1 ? 'high' : 'medium',
+      priority: i === 0 ? 'critical'  // Paperclip: critical|high|medium|low : i === 1 ? 'high' : 'medium',
       projectId: mvpProject.id,
       goalId: goal.id,
       assigneeAgentId: cto.id,
