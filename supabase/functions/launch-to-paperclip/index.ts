@@ -295,7 +295,7 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
       title: feature,
       description: `## Feature: ${feature}\n\nThis feature was identified as a validated must-have by the FounderLens research engine.\n\n**Why it matters:**\n${painPoints[i] || `Addresses a core pain point for ${persona}`}\n\n**Acceptance criteria:**\n- Feature works end-to-end for the target user\n- No critical bugs at launch\n- At least 1 real user has tested it\n\n**Priority:** Build this before anything in the nice-to-have list.`,
       status: 'todo',
-      priority: i === 0 ? 'critical'  // Paperclip: critical|high|medium|low : i === 1 ? 'high' : 'medium',
+      priority: (i === 0 ? 'critical' : i === 1 ? 'high' : 'medium'), // valid: critical|high|medium|low
       projectId: mvpProject.id,
       goalId: goal.id,
       assigneeAgentId: cto.id,
