@@ -286,6 +286,24 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
     ]);
     console.log(`Team created: CTO=${cto.id}, Engineer=${engineer.id}, CMO=${cmo.id}, Growth=${growth.id}`);
 
+    // Branding Agent — runs once on first heartbeat to generate brand identity
+    const branding = await pc('POST', `/companies/${companyId}/agents`, {
+      name: 'Brand',
+      role: 'general',
+      title: `Brand & Identity Lead of ${productName}`,
+      reportsTo: ceo.id,
+      capabilities: `Brand naming, domain research, visual identity direction, brand voice guidelines, social handle strategy. Expert in startup branding for ${opp.target_market}.`,
+      adapterType: 'http',
+      adapterConfig: {
+        url: `${supabaseUrl}/functions/v1/paperclip-agent-branding`,
+        headers: { 'x-founderlens-opportunity-id': opportunityId },
+        timeoutSec: 120,
+      },
+      prompt: `You are the Brand & Identity Lead of ${productName}. Your first task is to generate a complete brand identity package: 3 name options with domain availability, taglines, brand voice, color palette, logo concept, and social handles. Post results as a structured issue. On subsequent heartbeats, refine based on founder feedback in issue comments.`,
+      budgetMonthlyCents: 200,
+    });
+    console.log(`Brand agent: ${branding?.id || 'FAILED'}`);
+
     // ─────────────────────────────────────────────────────────────────────────
     // STEP 5: Seed initial backlog issues
     // ─────────────────────────────────────────────────────────────────────────
@@ -455,7 +473,7 @@ First 30 days: ${str(proposal.goToMarket?.first30Days)}`;
       companyId,
       companyUrl,
       companyName: productName,
-      agentCount: 5,
+      agentCount: 6,
       issueCount: mvpIssues.length + mktIssues.length + opsIssues.length,
       projectCount: 3,
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

@@ -61,6 +61,15 @@ export interface AICompany {
   budgetCents: number;
   ceoLastSummary: string;
   lastActivityAt: string;
+  brandPackage?: {
+    names: { name: string; tagline: string; feel: string; rationale: string }[];
+    domainResults: { name: string; domains: { tld: string; domain: string; status: string }[] }[];
+    colorPalette: { primary: { hex: string; name: string }; secondary: { hex: string; name: string }; accent: { hex: string; name: string } };
+    brandVoice: { tone: string };
+    logoConceptDescription: string;
+    socialHandleSuggestions: string[];
+    generatedAt: string;
+  };
   loading: boolean;
   error: string | null;
 }
@@ -146,6 +155,7 @@ export function useAICompanies() {
           openIssues: [],
           doneIssues: [],
           installedSkills: proposal.installedSkills || [],
+          brandPackage: proposal.brandPackage,
           stage: 'building',
           progressPercent: 0,
           monthlySpendCents: 0,

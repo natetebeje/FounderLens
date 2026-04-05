@@ -1,8 +1,9 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Building2, Rocket, ExternalLink, RefreshCw, Users, Target,
   CheckCircle2, Clock, AlertCircle, Zap, TrendingUp, Bot,
-  ChevronRight, Plus, Loader2, BarChart3, Package,
+  ChevronRight, Plus, Loader2, BarChart3, Package, Palette, Globe,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAICompanies, AICompany, PaperclipAgent } from '@/hooks/useAICompanies';
@@ -231,6 +232,11 @@ function CompanyCard({ company, navigate }: { company: AICompany; navigate: Retu
         </div>
       </div>
 
+      {/* Branding panel — shows after Brand agent first heartbeat */}
+      {company.brandPackage && (
+        <BrandingPanel brand={company.brandPackage} />
+      )}
+
       {/* Footer — skills + budget + time */}
       <div className="px-6 py-3 flex items-center justify-between gap-4">
         <div className="flex items-center gap-4">
@@ -263,6 +269,117 @@ function CompanyCard({ company, navigate }: { company: AICompany; navigate: Retu
           {timeAgo(company.lastActivityAt)}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Branding Panel ───────────────────────────────────────────────────────────
+
+function BrandingPanel({ brand }: { brand: NonNullable<AICompany['brandPackage']> }) {
+  const [expanded, setExpanded] = useState(false);
+  const topName = brand.names?.[0];
+  const topDomains = brand.domainResults?.[0]?.domains || [];
+  const availableDomain = topDomains.find(d => d.status === 'available');
+
+  return (
+    <div className="border-t border-white/8 px-6 py-4">
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full flex items-center justify-between group"
+      >
+        <div className="flex items-center gap-2">
+          <Palette className="w-3.5 h-3.5 text-purple-400" />
+          <span className="text-xs font-medium text-white/70">Brand Identity</span>
+          {topName && (
+            <span className="text-xs text-purple-300 font-semibold">· {topName.name}</span>
+          )}
+          {availableDomain && (
+            <span className="text-xs text-green-400">· {availableDomain.domain} ✓</span>
+          )}
+        </div>
+        <ChevronRight className={`w-3.5 h-3.5 text-white/30 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+      </button>
+
+      {expanded && (
+        <div className="mt-4 space-y-4">
+
+          {/* Name options */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {(brand.names || []).map((n, i) => {
+              const domains = brand.domainResults?.[i]?.domains || [];
+              const available = domains.find(d => d.status === 'available');
+              return (
+                <div key={n.name} className={`rounded-xl p-3 border ${
+                  i === 0
+                    ? 'border-purple-500/30 bg-purple-500/8'
+                    : 'border-white/8 bg-white/3'
+                }`}>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    {i === 0 && <span className="text-[10px] text-purple-400 font-medium">TOP PICK</span>}
+                    <span className="text-sm font-bold text-white">{n.name}</span>
+                  </div>
+                  <p className="text-xs text-white/50 italic mb-2">"{n.tagline}"</p>
+                  <div className="flex items-center gap-1">
+                    <Globe className="w-2.5 h-2.5 text-white/20" />
+                    {available ? (
+                      <a
+                        href={`https://www.namecheap.com/domains/registration/results/?domain=${available.domain}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-green-400 hover:underline"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        {available.domain} available →
+                      </a>
+                    ) : (
+                      <span className="text-[10px] text-white/30">
+                        {domains.find(d => d.status === 'taken')?.domain || 'checking...'} taken
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Color palette */}
+          {brand.colorPalette && (
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-white/40">Palette</span>
+              {[brand.colorPalette.primary, brand.colorPalette.secondary, brand.colorPalette.accent].map((c, i) => (
+                <div key={i} className="flex items-center gap-1.5" title={c.name}>
+                  <div
+                    className="w-5 h-5 rounded-full border border-white/20 shrink-0"
+                    style={{ backgroundColor: c.hex }}
+                  />
+                  <span className="text-xs text-white/40 font-mono">{c.hex}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Brand voice */}
+          {brand.brandVoice?.tone && (
+            <div>
+              <span className="text-xs text-white/40">Voice: </span>
+              <span className="text-xs text-white/60">{brand.brandVoice.tone}</span>
+            </div>
+          )}
+
+          {/* Social handles */}
+          {brand.socialHandleSuggestions?.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-white/40">Handles:</span>
+              {brand.socialHandleSuggestions.slice(0, 4).map(h => (
+                <span key={h} className="text-xs font-mono text-purple-300/70 bg-purple-500/10 px-2 py-0.5 rounded">
+                  {h}
+                </span>
+              ))}
+            </div>
+          )}
+
+        </div>
+      )}
     </div>
   );
 }

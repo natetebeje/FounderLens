@@ -92,6 +92,10 @@ const SKILLS_INDEX: {
   // ── Data / Automation (CEO + Growth) ─────────────────────────────────────────
   { name: 'data-analysis', repo: 'supercent-io/skills-template', path: 'skills/data-analysis', tags: ['data', 'analytics', 'ai'], roles: ['ceo', 'growth'] },
   { name: 'workflow-automation', repo: 'supercent-io/skills-template', path: 'skills/workflow-automation', tags: ['automation', 'ai', 'ops'], roles: ['ceo', 'cto'] },
+
+  // ── Branding (Brand agent only) ───────────────────────────────────────────────
+  { name: 'brand-guidelines', repo: 'anthropics/skills', path: 'skills/brand-guidelines', tags: ['branding', 'design', 'identity'], roles: ['brand' as any] },
+  { name: 'marketing-psychology', repo: 'coreyhaines31/marketingskills', path: 'skills/marketing-psychology', tags: ['branding', 'copy', 'positioning'], roles: ['brand' as any, 'cmo'] },
 ];
 
 // ─── Fetch SKILL.md from GitHub ───────────────────────────────────────────────
