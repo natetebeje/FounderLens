@@ -118,6 +118,14 @@ export const ModernNavigation = () => {
                 >
                   Build
                 </Button>
+                <Button 
+                  variant={location.pathname === '/companies' ? "default" : "ghost"} 
+                  size="sm" 
+                  onClick={() => navigate("/companies")}
+                  className="font-medium"
+                >
+                  🏢 AI Companies
+                </Button>
               </>
             ) : null}
           </div>

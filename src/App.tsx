@@ -43,6 +43,7 @@ const Profile = lazy(() => import("./pages/Profile"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Admin = lazy(() => import("./pages/Admin"));
 const Subscription = lazy(() => import("./pages/Subscription"));
+const Companies = lazy(() => import("./pages/Companies"));
 const SubscriptionSuccess = lazy(() => import("./pages/SubscriptionSuccess"));
 const Enterprise = lazy(() => import("./pages/Enterprise"));
 const Pricing = lazy(() => import("./pages/Pricing"));
@@ -147,6 +148,7 @@ const App = () => (
                       <Route path="/team" element={<ProtectedRoute requireWorkspace><Team /></ProtectedRoute>} />
                       <Route path="/enterprise" element={<Enterprise />} />
                       <Route path="/validation/:opportunityId" element={<ProtectedRoute requireWorkspace><ValidationWorkflow /></ProtectedRoute>} />
+                      <Route path="/companies" element={<ProtectedRoute requireWorkspace><Companies /></ProtectedRoute>} />
                       <Route path="/about" element={<About />} />
                       <Route path="/blog" element={<Blog />} />
                       <Route path="/careers" element={<Careers />} />
