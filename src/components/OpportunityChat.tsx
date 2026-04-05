@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Building2, ExternalLink } from 'lucide-react';
+import { SkillsPicker } from './SkillsPicker';
 import { Send, Sparkles, Loader2, FileText, Bot, User, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -524,6 +525,17 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
               )}
               {launchError && (
                 <p className="text-xs text-red-400 text-center">{launchError}</p>
+              )}
+
+              {/* Skills Picker — shown after company is launched */}
+              {paperclipCompanyId && (
+                <div className="mt-2 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3">
+                  <SkillsPicker
+                    opportunityId={opportunityId}
+                    companyId={paperclipCompanyId}
+                    compact
+                  />
+                </div>
               )}
             </div>
           )}

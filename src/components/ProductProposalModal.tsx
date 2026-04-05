@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Download, Copy, Check, Rocket, ChevronRight, Target, Users, Zap, DollarSign, TrendingUp, AlertTriangle, ArrowRight, BarChart3, Loader2, ExternalLink, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import { SkillsPicker } from './SkillsPicker';
 
 // ============================================================================
 // TYPES
@@ -469,6 +470,18 @@ export function ProductProposalModal({
                     ))}
                   </ol>
                 </Section>
+              )}
+
+              {/* Skills Picker — appears after company is launched */}
+              {launchResult && (
+                <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-4">
+                  <SkillsPicker
+                    opportunityId={opportunityId}
+                    companyId={launchResult.companyId}
+                    compact
+                    onDone={(installed) => console.log('Skills installed:', installed)}
+                  />
+                </div>
               )}
 
               {/* Launch CTA */}
