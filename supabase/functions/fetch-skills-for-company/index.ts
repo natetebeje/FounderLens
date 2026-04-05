@@ -20,65 +20,78 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// ─── Agent roles ──────────────────────────────────────────────────────────────
+type AgentRole = 'ceo' | 'cto' | 'engineer' | 'cmo' | 'growth';
+
 // ─── skills.sh registry index ─────────────────────────────────────────────────
-// Curated from the skills.sh leaderboard. Each entry maps to a GitHub raw path.
-// Format: { name, description, repo, path, tags }
+// Each skill specifies which agent roles should receive it.
+// Skills are intentionally scoped — a CMO doesn't need database schema patterns.
 
-const SKILLS_INDEX = [
-  // ── Engineering ─────────────────────────────────────────────────────────────
-  { name: 'supabase-postgres-best-practices', repo: 'supabase/agent-skills', path: 'skills/supabase-postgres-best-practices', tags: ['backend', 'database', 'postgres', 'supabase', 'saas'] },
-  { name: 'test-driven-development', repo: 'obra/superpowers', path: 'skills/test-driven-development', tags: ['engineering', 'testing', 'quality', 'tdd'] },
-  { name: 'systematic-debugging', repo: 'obra/superpowers', path: 'skills/systematic-debugging', tags: ['engineering', 'debugging', 'backend', 'frontend'] },
-  { name: 'api-design-principles', repo: 'wshobson/agents', path: 'skills/api-design-principles', tags: ['backend', 'api', 'engineering', 'saas'] },
-  { name: 'nodejs-backend-patterns', repo: 'wshobson/agents', path: 'skills/nodejs-backend-patterns', tags: ['backend', 'nodejs', 'engineering'] },
-  { name: 'typescript-advanced-types', repo: 'wshobson/agents', path: 'skills/typescript-advanced-types', tags: ['frontend', 'engineering', 'typescript'] },
-  { name: 'security-best-practices', repo: 'supercent-io/skills-template', path: 'skills/security-best-practices', tags: ['security', 'backend', 'saas', 'engineering'] },
-  { name: 'database-schema-design', repo: 'supercent-io/skills-template', path: 'skills/database-schema-design', tags: ['backend', 'database', 'engineering'] },
-  { name: 'backend-testing', repo: 'supercent-io/skills-template', path: 'skills/backend-testing', tags: ['backend', 'testing', 'engineering'] },
-  { name: 'code-review', repo: 'supercent-io/skills-template', path: 'skills/code-review', tags: ['engineering', 'quality'] },
-  { name: 'better-auth-best-practices', repo: 'better-auth/skills', path: 'skills/better-auth-best-practices', tags: ['auth', 'security', 'saas', 'backend'] },
+const SKILLS_INDEX: {
+  name: string;
+  repo: string;
+  path: string;
+  tags: string[];
+  roles: AgentRole[]; // which agents get this skill
+}[] = [
+  // ── Engineering (CTO + Engineer only) ────────────────────────────────────────
+  { name: 'supabase-postgres-best-practices', repo: 'supabase/agent-skills', path: 'skills/supabase-postgres-best-practices', tags: ['backend', 'database', 'postgres', 'saas'], roles: ['cto', 'engineer'] },
+  { name: 'test-driven-development', repo: 'obra/superpowers', path: 'skills/test-driven-development', tags: ['engineering', 'testing', 'tdd'], roles: ['cto', 'engineer'] },
+  { name: 'systematic-debugging', repo: 'obra/superpowers', path: 'skills/systematic-debugging', tags: ['engineering', 'debugging'], roles: ['engineer'] },
+  { name: 'api-design-principles', repo: 'wshobson/agents', path: 'skills/api-design-principles', tags: ['backend', 'api', 'engineering'], roles: ['cto', 'engineer'] },
+  { name: 'nodejs-backend-patterns', repo: 'wshobson/agents', path: 'skills/nodejs-backend-patterns', tags: ['backend', 'nodejs'], roles: ['cto', 'engineer'] },
+  { name: 'typescript-advanced-types', repo: 'wshobson/agents', path: 'skills/typescript-advanced-types', tags: ['frontend', 'typescript'], roles: ['engineer'] },
+  { name: 'security-best-practices', repo: 'supercent-io/skills-template', path: 'skills/security-best-practices', tags: ['security', 'backend', 'saas'], roles: ['cto', 'engineer'] },
+  { name: 'database-schema-design', repo: 'supercent-io/skills-template', path: 'skills/database-schema-design', tags: ['backend', 'database'], roles: ['cto', 'engineer'] },
+  { name: 'backend-testing', repo: 'supercent-io/skills-template', path: 'skills/backend-testing', tags: ['backend', 'testing'], roles: ['engineer'] },
+  { name: 'code-review', repo: 'supercent-io/skills-template', path: 'skills/code-review', tags: ['engineering', 'quality'], roles: ['cto'] },
+  { name: 'better-auth-best-practices', repo: 'better-auth/skills', path: 'skills/better-auth-best-practices', tags: ['auth', 'security', 'saas'], roles: ['cto', 'engineer'] },
 
-  // ── Frontend / Design ────────────────────────────────────────────────────────
-  { name: 'frontend-design', repo: 'anthropics/skills', path: 'skills/frontend-design', tags: ['frontend', 'design', 'ui', 'ux'] },
-  { name: 'web-design-guidelines', repo: 'vercel-labs/agent-skills', path: 'skills/web-design-guidelines', tags: ['frontend', 'design', 'ui'] },
-  { name: 'vercel-react-best-practices', repo: 'vercel-labs/agent-skills', path: 'skills/vercel-react-best-practices', tags: ['frontend', 'react', 'engineering'] },
-  { name: 'shadcn', repo: 'shadcn/ui', path: 'skills/shadcn', tags: ['frontend', 'ui', 'components', 'react'] },
-  { name: 'tailwind-design-system', repo: 'wshobson/agents', path: 'skills/tailwind-design-system', tags: ['frontend', 'design', 'css', 'ui'] },
-  { name: 'web-accessibility', repo: 'supercent-io/skills-template', path: 'skills/web-accessibility', tags: ['frontend', 'accessibility', 'ux'] },
-  { name: 'sleek-design-mobile-apps', repo: 'sleekdotdesign/agent-skills', path: 'skills/sleek-design-mobile-apps', tags: ['mobile', 'design', 'ui', 'app'] },
+  // ── Frontend / Design (Engineer only) ────────────────────────────────────────
+  { name: 'frontend-design', repo: 'anthropics/skills', path: 'skills/frontend-design', tags: ['frontend', 'design', 'ui', 'ux'], roles: ['engineer'] },
+  { name: 'web-design-guidelines', repo: 'vercel-labs/agent-skills', path: 'skills/web-design-guidelines', tags: ['frontend', 'design', 'ui'], roles: ['engineer'] },
+  { name: 'vercel-react-best-practices', repo: 'vercel-labs/agent-skills', path: 'skills/vercel-react-best-practices', tags: ['frontend', 'react'], roles: ['engineer'] },
+  { name: 'shadcn', repo: 'shadcn/ui', path: 'skills/shadcn', tags: ['frontend', 'ui', 'components'], roles: ['engineer'] },
+  { name: 'tailwind-design-system', repo: 'wshobson/agents', path: 'skills/tailwind-design-system', tags: ['frontend', 'design', 'css'], roles: ['engineer'] },
+  { name: 'web-accessibility', repo: 'supercent-io/skills-template', path: 'skills/web-accessibility', tags: ['frontend', 'accessibility'], roles: ['engineer'] },
+  { name: 'sleek-design-mobile-apps', repo: 'sleekdotdesign/agent-skills', path: 'skills/sleek-design-mobile-apps', tags: ['mobile', 'design', 'ui', 'app'], roles: ['engineer'] },
 
-  // ── Marketing / Growth ───────────────────────────────────────────────────────
-  { name: 'copywriting', repo: 'coreyhaines31/marketingskills', path: 'skills/copywriting', tags: ['marketing', 'copy', 'content', 'landing-page', 'cmo'] },
-  { name: 'launch-strategy', repo: 'coreyhaines31/marketingskills', path: 'skills/launch-strategy', tags: ['marketing', 'launch', 'gtm', 'growth', 'cmo'] },
-  { name: 'content-strategy', repo: 'coreyhaines31/marketingskills', path: 'skills/content-strategy', tags: ['marketing', 'content', 'seo', 'cmo'] },
-  { name: 'seo-audit', repo: 'coreyhaines31/marketingskills', path: 'skills/seo-audit', tags: ['seo', 'marketing', 'growth'] },
-  { name: 'social-content', repo: 'coreyhaines31/marketingskills', path: 'skills/social-content', tags: ['social', 'marketing', 'content', 'cmo'] },
-  { name: 'cold-email', repo: 'coreyhaines31/marketingskills', path: 'skills/cold-email', tags: ['email', 'outreach', 'growth', 'sales'] },
-  { name: 'pricing-strategy', repo: 'coreyhaines31/marketingskills', path: 'skills/pricing-strategy', tags: ['pricing', 'monetization', 'saas', 'cmo'] },
-  { name: 'analytics-tracking', repo: 'coreyhaines31/marketingskills', path: 'skills/analytics-tracking', tags: ['analytics', 'growth', 'data', 'tracking'] },
-  { name: 'page-cro', repo: 'coreyhaines31/marketingskills', path: 'skills/page-cro', tags: ['cro', 'conversion', 'landing-page', 'growth'] },
-  { name: 'signup-flow-cro', repo: 'coreyhaines31/marketingskills', path: 'skills/signup-flow-cro', tags: ['cro', 'onboarding', 'saas', 'growth'] },
-  { name: 'referral-program', repo: 'coreyhaines31/marketingskills', path: 'skills/referral-program', tags: ['growth', 'viral', 'referral', 'marketing'] },
-  { name: 'ad-creative', repo: 'coreyhaines31/marketingskills', path: 'skills/ad-creative', tags: ['ads', 'marketing', 'creative', 'growth'] },
-  { name: 'ai-seo', repo: 'coreyhaines31/marketingskills', path: 'skills/ai-seo', tags: ['seo', 'ai', 'marketing', 'content'] },
-  { name: 'product-marketing-context', repo: 'coreyhaines31/marketingskills', path: 'skills/product-marketing-context', tags: ['marketing', 'product', 'positioning', 'cmo'] },
-  { name: 'marketing-psychology', repo: 'coreyhaines31/marketingskills', path: 'skills/marketing-psychology', tags: ['marketing', 'psychology', 'copy', 'conversion'] },
-  { name: 'free-tool-strategy', repo: 'coreyhaines31/marketingskills', path: 'skills/free-tool-strategy', tags: ['growth', 'saas', 'product-led', 'marketing'] },
-  { name: 'churn-prevention', repo: 'coreyhaines31/marketingskills', path: 'skills/churn-prevention', tags: ['retention', 'saas', 'growth', 'customer-success'] },
+  // ── Marketing (CMO only) ─────────────────────────────────────────────────────
+  { name: 'copywriting', repo: 'coreyhaines31/marketingskills', path: 'skills/copywriting', tags: ['marketing', 'copy', 'content', 'landing-page'], roles: ['cmo'] },
+  { name: 'content-strategy', repo: 'coreyhaines31/marketingskills', path: 'skills/content-strategy', tags: ['marketing', 'content', 'seo'], roles: ['cmo'] },
+  { name: 'social-content', repo: 'coreyhaines31/marketingskills', path: 'skills/social-content', tags: ['social', 'marketing', 'content'], roles: ['cmo'] },
+  { name: 'product-marketing-context', repo: 'coreyhaines31/marketingskills', path: 'skills/product-marketing-context', tags: ['marketing', 'product', 'positioning'], roles: ['cmo'] },
+  { name: 'marketing-psychology', repo: 'coreyhaines31/marketingskills', path: 'skills/marketing-psychology', tags: ['marketing', 'psychology', 'copy'], roles: ['cmo'] },
+  { name: 'ad-creative', repo: 'coreyhaines31/marketingskills', path: 'skills/ad-creative', tags: ['ads', 'marketing', 'creative'], roles: ['cmo'] },
 
-  // ── Product / Strategy ───────────────────────────────────────────────────────
-  { name: 'brainstorming', repo: 'obra/superpowers', path: 'skills/brainstorming', tags: ['strategy', 'product', 'ideation'] },
-  { name: 'writing-plans', repo: 'obra/superpowers', path: 'skills/writing-plans', tags: ['strategy', 'planning', 'product', 'ceo'] },
-  { name: 'prd', repo: 'github/awesome-copilot', path: 'skills/prd', tags: ['product', 'requirements', 'planning', 'pm'] },
-  { name: 'technical-writing', repo: 'supercent-io/skills-template', path: 'skills/technical-writing', tags: ['documentation', 'writing', 'product'] },
+  // ── Growth (Growth + CMO shared) ─────────────────────────────────────────────
+  { name: 'launch-strategy', repo: 'coreyhaines31/marketingskills', path: 'skills/launch-strategy', tags: ['launch', 'gtm', 'growth'], roles: ['ceo', 'cmo', 'growth'] },
+  { name: 'seo-audit', repo: 'coreyhaines31/marketingskills', path: 'skills/seo-audit', tags: ['seo', 'marketing', 'growth'], roles: ['cmo', 'growth'] },
+  { name: 'cold-email', repo: 'coreyhaines31/marketingskills', path: 'skills/cold-email', tags: ['email', 'outreach', 'growth'], roles: ['cmo', 'growth'] },
+  { name: 'analytics-tracking', repo: 'coreyhaines31/marketingskills', path: 'skills/analytics-tracking', tags: ['analytics', 'growth', 'data'], roles: ['ceo', 'growth'] },
+  { name: 'page-cro', repo: 'coreyhaines31/marketingskills', path: 'skills/page-cro', tags: ['cro', 'conversion', 'landing-page'], roles: ['growth'] },
+  { name: 'signup-flow-cro', repo: 'coreyhaines31/marketingskills', path: 'skills/signup-flow-cro', tags: ['cro', 'onboarding', 'saas'], roles: ['engineer', 'growth'] },
+  { name: 'referral-program', repo: 'coreyhaines31/marketingskills', path: 'skills/referral-program', tags: ['growth', 'viral', 'referral'], roles: ['ceo', 'growth'] },
+  { name: 'ai-seo', repo: 'coreyhaines31/marketingskills', path: 'skills/ai-seo', tags: ['seo', 'ai', 'marketing'], roles: ['cmo', 'growth'] },
+  { name: 'free-tool-strategy', repo: 'coreyhaines31/marketingskills', path: 'skills/free-tool-strategy', tags: ['growth', 'saas', 'product-led'], roles: ['ceo', 'growth'] },
+  { name: 'churn-prevention', repo: 'coreyhaines31/marketingskills', path: 'skills/churn-prevention', tags: ['retention', 'saas', 'growth'], roles: ['ceo', 'growth'] },
 
-  // ── Mobile / App ─────────────────────────────────────────────────────────────
-  { name: 'building-native-ui', repo: 'expo/skills', path: 'skills/building-native-ui', tags: ['mobile', 'react-native', 'expo', 'app'] },
-  { name: 'expo-deployment', repo: 'expo/skills', path: 'skills/expo-deployment', tags: ['mobile', 'deployment', 'app', 'expo'] },
+  // ── Pricing / Monetization (CEO + CMO) ───────────────────────────────────────
+  { name: 'pricing-strategy', repo: 'coreyhaines31/marketingskills', path: 'skills/pricing-strategy', tags: ['pricing', 'monetization', 'saas'], roles: ['ceo', 'cmo'] },
 
-  // ── AI / Data ────────────────────────────────────────────────────────────────
-  { name: 'data-analysis', repo: 'supercent-io/skills-template', path: 'skills/data-analysis', tags: ['data', 'analytics', 'ai', 'backend'] },
-  { name: 'workflow-automation', repo: 'supercent-io/skills-template', path: 'skills/workflow-automation', tags: ['automation', 'ai', 'ops', 'saas'] },
+  // ── Strategy / Planning (CEO only) ───────────────────────────────────────────
+  { name: 'brainstorming', repo: 'obra/superpowers', path: 'skills/brainstorming', tags: ['strategy', 'product', 'ideation'], roles: ['ceo'] },
+  { name: 'writing-plans', repo: 'obra/superpowers', path: 'skills/writing-plans', tags: ['strategy', 'planning', 'product'], roles: ['ceo'] },
+  { name: 'prd', repo: 'github/awesome-copilot', path: 'skills/prd', tags: ['product', 'requirements', 'planning'], roles: ['ceo', 'cto'] },
+  { name: 'technical-writing', repo: 'supercent-io/skills-template', path: 'skills/technical-writing', tags: ['documentation', 'writing'], roles: ['cto', 'engineer'] },
+
+  // ── Mobile / App (Engineer + CTO) ────────────────────────────────────────────
+  { name: 'building-native-ui', repo: 'expo/skills', path: 'skills/building-native-ui', tags: ['mobile', 'react-native', 'expo', 'app'], roles: ['engineer'] },
+  { name: 'expo-deployment', repo: 'expo/skills', path: 'skills/expo-deployment', tags: ['mobile', 'deployment', 'app'], roles: ['cto', 'engineer'] },
+
+  // ── Data / Automation (CEO + Growth) ─────────────────────────────────────────
+  { name: 'data-analysis', repo: 'supercent-io/skills-template', path: 'skills/data-analysis', tags: ['data', 'analytics', 'ai'], roles: ['ceo', 'growth'] },
+  { name: 'workflow-automation', repo: 'supercent-io/skills-template', path: 'skills/workflow-automation', tags: ['automation', 'ai', 'ops'], roles: ['ceo', 'cto'] },
 ];
 
 // ─── Fetch SKILL.md from GitHub ───────────────────────────────────────────────
@@ -109,7 +122,7 @@ async function injectSkillIntoPaperclip(
   companyId: string,
   skillName: string,
   content: string,
-  agentIds: string[]
+  targetAgentIds: string[] // only agents whose role matches this skill
 ): Promise<boolean> {
   try {
     const res = await fetch(
@@ -122,8 +135,8 @@ async function injectSkillIntoPaperclip(
         },
         body: JSON.stringify({
           name: skillName,
-          content: content.slice(0, 8000), // Paperclip skill content limit
-          ...(agentIds.length > 0 ? { agentIds } : {}),
+          content: content.slice(0, 8000),
+          ...(targetAgentIds.length > 0 ? { agentIds: targetAgentIds } : {}),
         }),
       }
     );
@@ -169,13 +182,29 @@ serve(async (req: Request) => {
     const proposal = workflow?.product_proposal || {};
     const research = workflow?.reddit_validation_results || {};
 
-    // Load company agents from Paperclip (to inject skills to all agents)
+    // Load company agents from Paperclip — build role → agentId map
     const agentsRes = await fetch(
       `${Deno.env.get('PAPERCLIP_API_URL')}/api/companies/${companyId}/agents`,
       { headers: { 'Authorization': `Bearer ${Deno.env.get('PAPERCLIP_BOARD_API_KEY')}` } }
     );
-    const agents = agentsRes.ok ? await agentsRes.json() : [];
-    const agentIds = agents.map((a: any) => a.id);
+    const agents: any[] = agentsRes.ok ? await agentsRes.json() : [];
+
+    // Map Paperclip role → agent ID(s)
+    // Agent names in our system: CEO, CTO, Engineer, CMO, Growth
+    const roleToAgentIds: Record<string, string[]> = {};
+    for (const agent of agents) {
+      const role = agent.role as string; // 'ceo' | 'cto' | 'cmo' | 'engineer' etc.
+      const nameRole = agent.name?.toLowerCase(); // fallback by name
+      const key = role || nameRole;
+      if (!roleToAgentIds[key]) roleToAgentIds[key] = [];
+      roleToAgentIds[key].push(agent.id);
+      // Also index by name for Growth agent (role='engineer' but name='Growth')
+      if (agent.name) {
+        const nameKey = agent.name.toLowerCase();
+        if (!roleToAgentIds[nameKey]) roleToAgentIds[nameKey] = [];
+        roleToAgentIds[nameKey].push(agent.id);
+      }
+    }
 
     // ── If skills are pre-selected by user, use those ─────────────────────────
     let skillsToInstall: typeof SKILLS_INDEX = [];
@@ -253,8 +282,8 @@ Return JSON only:
       skillsToInstall = SKILLS_INDEX.filter(s => coreSkills.includes(s.name));
     }
 
-    // ── Fetch and inject each skill ───────────────────────────────────────────
-    const results: { name: string; status: 'installed' | 'not_found' | 'failed'; url: string }[] = [];
+    // ── Fetch and inject each skill to the right agents only ─────────────────
+    const results: { name: string; status: 'installed' | 'not_found' | 'failed'; url: string; assignedRoles: string[] }[] = [];
 
     await Promise.all(
       skillsToInstall.map(async (skill) => {
@@ -262,12 +291,26 @@ Return JSON only:
         const skillUrl = `https://skills.sh/${skill.name}`;
 
         if (!content) {
-          results.push({ name: skill.name, status: 'not_found', url: skillUrl });
+          results.push({ name: skill.name, status: 'not_found', url: skillUrl, assignedRoles: [] });
           return;
         }
 
-        const ok = await injectSkillIntoPaperclip(companyId, skill.name, content, agentIds);
-        results.push({ name: skill.name, status: ok ? 'installed' : 'failed', url: skillUrl });
+        // Resolve target agent IDs for this skill's roles
+        const targetRoles = skill.roles || ['ceo', 'cto', 'engineer', 'cmo', 'growth'];
+        const targetAgentIds = [...new Set(
+          targetRoles.flatMap(role => {
+            // Match by role first, then by name (Growth agent has role='engineer')
+            return roleToAgentIds[role] || roleToAgentIds[role === 'growth' ? 'growth' : role] || [];
+          })
+        )];
+
+        const ok = await injectSkillIntoPaperclip(companyId, skill.name, content, targetAgentIds);
+        results.push({
+          name: skill.name,
+          status: ok ? 'installed' : 'failed',
+          url: skillUrl,
+          assignedRoles: targetRoles,
+        });
       })
     );
 

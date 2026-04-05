@@ -21,6 +21,7 @@ interface SkillEntry {
   tags: string[];
   url: string;
   repo: string;
+  roles?: string[];
 }
 
 interface InstalledResult {
@@ -368,8 +369,19 @@ function SkillRow({
           )}
         </div>
         <div className="flex gap-1 mt-0.5 flex-wrap">
-          {skill.tags.slice(0, 3).map(t => (
-            <span key={t} className="text-[10px] text-white/30 bg-white/5 px-1 rounded">
+          {/* Role badges first */}
+          {skill.roles?.map(r => (
+            <span key={r} className={`text-[10px] px-1 rounded font-medium ${
+              r === 'ceo' ? 'bg-yellow-500/15 text-yellow-400/80' :
+              r === 'cto' ? 'bg-blue-500/15 text-blue-400/80' :
+              r === 'engineer' ? 'bg-cyan-500/15 text-cyan-400/80' :
+              r === 'cmo' ? 'bg-pink-500/15 text-pink-400/80' :
+              'bg-green-500/15 text-green-400/80'
+            }`}>{r}</span>
+          ))}
+          {/* Tags */}
+          {skill.tags.slice(0, 2).map(t => (
+            <span key={t} className="text-[10px] text-white/20 bg-white/5 px-1 rounded">
               {t}
             </span>
           ))}
