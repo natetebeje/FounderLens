@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Building2, ExternalLink } from 'lucide-react';
 import { Send, Sparkles, Loader2, FileText, Bot, User, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -222,6 +223,10 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
   const [input, setInput] = useState('');
   const [streamingContent, setStreamingContent] = useState('');
   const [proposal, setProposal] = useState<object | null>(null);
+  const [paperclipCompanyId, setPaperclipCompanyId] = useState<string | undefined>();
+  const [paperclipCompanyUrl, setPaperclipCompanyUrl] = useState<string | undefined>();
+  const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [hasLoadedHistory, setHasLoadedHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -287,15 +292,19 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
           }]);
         }
 
-        // Also load saved proposal from validation_workflows
+        // Also load saved proposal + Paperclip company from validation_workflows
         const { data: workflow } = await supabase
           .from('validation_workflows')
-          .select('product_proposal')
+          .select('product_proposal, paperclip_company_id, paperclip_company_url')
           .eq('opportunity_id', opportunityId)
           .maybeSingle();
 
         if (workflow?.product_proposal && Object.keys(workflow.product_proposal).length > 0) {
           setProposal(workflow.product_proposal);
+        }
+        if (workflow?.paperclip_company_id) {
+          setPaperclipCompanyId(workflow.paperclip_company_id);
+          setPaperclipCompanyUrl(workflow.paperclip_company_url || 'https://build.founderlens.io');
         }
 
         setHasLoadedHistory(true);
@@ -450,14 +459,73 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
           </div>
 
           {showProposalButton && (
-            <button
-              onClick={() => proposal ? generateProposalPdf(proposal, opportunityTitle) : handleSend('generate_proposal')}
-              disabled={isStreaming}
-              className="mt-2 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-indigo-100 dark:bg-gradient-to-r dark:from-indigo-600/30 dark:to-purple-600/30 border border-indigo-300 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-200 dark:hover:from-indigo-600/40 dark:hover:to-purple-600/40 transition-all disabled:opacity-50"
-            >
-              {proposal ? <Download className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
-              {proposal ? 'Download Proposal PDF' : 'Generate Product Proposal'}
-            </button>
+            <div className="mt-2 space-y-2">
+              {/* Generate / Download Proposal */}
+              <button
+                onClick={() => proposal ? generateProposalPdf(proposal, opportunityTitle) : handleSend('generate_proposal')}
+                disabled={isStreaming || launching}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-indigo-100 dark:bg-gradient-to-r dark:from-indigo-600/30 dark:to-purple-600/30 border border-indigo-300 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-200 dark:hover:from-indigo-600/40 dark:hover:to-purple-600/40 transition-all disabled:opacity-50"
+              >
+                {proposal ? <Download className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
+                {proposal ? 'Download Proposal PDF' : 'Generate Product Proposal'}
+              </button>
+
+              {/* Build This — only shows after proposal is generated */}
+              {proposal && (
+                paperclipCompanyId ? (
+                  // Already launched — show open button
+                  <button
+                    onClick={() => window.open(paperclipCompanyUrl || 'https://build.founderlens.io', '_blank')}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-green-500/15 border border-green-500/30 text-green-400 text-xs font-semibold hover:bg-green-500/25 transition-all"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Open AI Company Dashboard
+                  </button>
+                ) : (
+                  // Not yet launched
+                  <button
+                    onClick={async () => {
+                      if (launching) return;
+                      setLaunching(true);
+                      setLaunchError(null);
+                      try {
+                        const { data: { session } } = await supabase.auth.getSession();
+                        const token = session?.access_token;
+                        const supabaseUrl = 'https://phppdhsozkpsquxlfezg.supabase.co';
+                        const res = await fetch(`${supabaseUrl}/functions/v1/launch-to-paperclip`, {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                          },
+                          body: JSON.stringify({ opportunityId }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok || !data.success) throw new Error(data.error || 'Launch failed');
+                        setPaperclipCompanyId(data.companyId);
+                        setPaperclipCompanyUrl(data.companyUrl);
+                        window.open(data.companyUrl, '_blank');
+                      } catch (err: any) {
+                        setLaunchError(err.message || 'Launch failed. Please try again.');
+                      } finally {
+                        setLaunching(false);
+                      }
+                    }}
+                    disabled={launching || isStreaming}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600/40 to-purple-600/40 border border-indigo-500/40 text-white text-xs font-semibold hover:from-indigo-600/60 hover:to-purple-600/60 transition-all disabled:opacity-60"
+                  >
+                    {launching ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Hiring your AI team...</>
+                    ) : (
+                      <><Building2 className="w-3.5 h-3.5" /> Build This</>  
+                    )}
+                  </button>
+                )
+              )}
+              {launchError && (
+                <p className="text-xs text-red-400 text-center">{launchError}</p>
+              )}
+            </div>
           )}
         </div>
       </div>

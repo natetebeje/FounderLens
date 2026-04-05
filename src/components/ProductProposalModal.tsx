@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { X, Download, Copy, Check, Rocket, ChevronRight, Target, Users, Zap, DollarSign, TrendingUp, AlertTriangle, ArrowRight, BarChart3 } from 'lucide-react';
+import { X, Download, Copy, Check, Rocket, ChevronRight, Target, Users, Zap, DollarSign, TrendingUp, AlertTriangle, ArrowRight, BarChart3, Loader2, ExternalLink, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { supabase } from '@/integrations/supabase/client';
 
 // ============================================================================
 // TYPES
@@ -58,6 +59,8 @@ interface ProductProposalModalProps {
   opportunityTitle: string;
   opportunityId: string;
   onClose: () => void;
+  existingCompanyId?: string;
+  existingCompanyUrl?: string;
 }
 
 // ============================================================================
@@ -69,9 +72,58 @@ export function ProductProposalModal({
   opportunityTitle,
   opportunityId,
   onClose,
+  existingCompanyId,
+  existingCompanyUrl,
 }: ProductProposalModalProps) {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'build' | 'launch'>('overview');
+  const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const [launchResult, setLaunchResult] = useState<{
+    companyId: string;
+    companyUrl: string;
+    companyName: string;
+    agentCount: number;
+    issueCount: number;
+  } | null>(existingCompanyId ? { companyId: existingCompanyId, companyUrl: existingCompanyUrl || 'https://build.founderlens.io', companyName: proposal.productName || opportunityTitle, agentCount: 5, issueCount: 0 } : null);
+
+  const handleLaunch = async () => {
+    if (launchResult) {
+      window.open(launchResult.companyUrl, '_blank');
+      return;
+    }
+    setLaunching(true);
+    setLaunchError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ||
+        'https://phppdhsozkpsquxlfezg.supabase.co';
+      const res = await fetch(`${supabaseUrl}/functions/v1/launch-to-paperclip`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ opportunityId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Launch failed');
+      setLaunchResult({
+        companyId: data.companyId,
+        companyUrl: data.companyUrl,
+        companyName: data.companyName,
+        agentCount: data.agentCount,
+        issueCount: data.issueCount,
+      });
+      // Auto-switch to launch tab
+      setActiveTab('launch');
+    } catch (err: any) {
+      setLaunchError(err.message || 'Something went wrong. Please try again.');
+    } finally {
+      setLaunching(false);
+    }
+  };
 
   const handleCopyMarkdown = async () => {
     const md = generateMarkdown(proposal, opportunityTitle);
@@ -420,25 +472,72 @@ export function ProductProposalModal({
               )}
 
               {/* Launch CTA */}
-              <div className="rounded-2xl bg-gradient-to-br from-indigo-600/20 to-purple-600/20 border border-indigo-500/30 p-5 text-center">
-                <Rocket className="w-8 h-8 text-indigo-400 mx-auto mb-2" />
-                <h3 className="text-base font-bold text-white mb-1">Ready to Build?</h3>
-                <p className="text-sm text-white/60 mb-4">
-                  Launch your AI company — CEO, CTO, Engineer, and CMO agents hired and working within 30 seconds.
-                  <span className="block mt-1 text-xs text-indigo-400">Powered by Paperclip × FounderLens</span>
-                </p>
-                <Button
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold"
-                  onClick={() => {
-                    // Phase 3: wire to launch-to-paperclip
-                    alert('Coming in Phase 3 — Paperclip integration');
-                  }}
-                >
-                  <Rocket className="w-4 h-4 mr-2" />
-                  Launch My AI Company
-                </Button>
-                <p className="text-xs text-white/30 mt-2">Phase 3 feature — coming soon</p>
-              </div>
+              {launchResult ? (
+                // ── Success state ──────────────────────────────────────────
+                <div className="rounded-2xl bg-gradient-to-br from-green-600/20 to-emerald-600/20 border border-green-500/30 p-6 text-center">
+                  <div className="w-14 h-14 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-3">
+                    <Building2 className="w-7 h-7 text-green-400" />
+                  </div>
+                  <h3 className="text-lg font-bold text-white mb-1">Your AI Company is Live</h3>
+                  <p className="text-sm text-white/60 mb-1">
+                    <span className="font-semibold text-white">{launchResult.companyName}</span> is running on
+                    build.founderlens.io
+                  </p>
+                  <div className="flex items-center justify-center gap-4 text-xs text-white/50 mb-4">
+                    <span>✓ {launchResult.agentCount} agents hired</span>
+                    <span>✓ {launchResult.issueCount} tasks seeded</span>
+                    <span>✓ 3 projects created</span>
+                  </div>
+                  <Button
+                    className="bg-green-600 hover:bg-green-500 text-white font-semibold w-full"
+                    onClick={() => window.open(launchResult.companyUrl, '_blank')}
+                  >
+                    <ExternalLink className="w-4 h-4 mr-2" />
+                    Open Company Dashboard
+                  </Button>
+                  <p className="text-xs text-white/30 mt-2">
+                    build.founderlens.io · Powered by Paperclip
+                  </p>
+                </div>
+              ) : (
+                // ── Pre-launch state ───────────────────────────────────────
+                <div className="rounded-2xl bg-gradient-to-br from-indigo-600/20 to-purple-600/20 border border-indigo-500/30 p-5 text-center">
+                  <Rocket className="w-8 h-8 text-indigo-400 mx-auto mb-2" />
+                  <h3 className="text-base font-bold text-white mb-1">Ready to Build?</h3>
+                  <p className="text-sm text-white/60 mb-4">
+                    {launching
+                      ? 'Hiring your AI team — CEO, CTO, Engineer, CMO, and Growth...'
+                      : 'One click launches a real AI company — 5 agents briefed from your proposal and research, working in 30 seconds.'}
+                    <span className="block mt-1 text-xs text-indigo-400">Powered by Paperclip × FounderLens</span>
+                  </p>
+                  {launchError && (
+                    <div className="mb-3 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-300 text-left">
+                      {launchError}
+                    </div>
+                  )}
+                  {launching ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-center gap-2 text-indigo-300">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span className="text-sm font-medium">Building your company...</span>
+                      </div>
+                      <div className="text-xs text-white/40 space-y-1">
+                        <div>Creating company · Setting goal · Hiring team</div>
+                        <div>Seeding backlog · Injecting research context</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold w-full"
+                      onClick={handleLaunch}
+                      disabled={launching}
+                    >
+                      <Rocket className="w-4 h-4 mr-2" />
+                      Build This
+                    </Button>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
