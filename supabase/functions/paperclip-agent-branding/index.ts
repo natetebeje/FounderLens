@@ -352,9 +352,9 @@ ${(brand.socialHandleSuggestions || []).map((h: string) => `- \`${h}\``).join('\
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (err: any) {
-    console.error('Branding agent error:', err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    console.error('Branding agent error:', err.message);
+    return new Response(JSON.stringify({ success: false, error: err.message, summary: `Branding error: ${err.message}` }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });

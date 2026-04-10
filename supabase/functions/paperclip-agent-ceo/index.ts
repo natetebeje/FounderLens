@@ -16,10 +16,11 @@ serve(async (req: Request) => {
 
   try {
     const body = await req.json();
+    console.log(`CEO raw payload: ${JSON.stringify(body).substring(0, 500)}`);
     const { runId, agentId, companyId, context = {} } = body;
     const opportunityId = req.headers.get('x-founderlens-opportunity-id') || undefined;
 
-    console.log(`CEO heartbeat — company: ${companyId}, wake: ${context.wakeReason}`);
+    console.log(`CEO heartbeat — company: ${companyId}, agent: ${agentId}, run: ${runId}, wake: ${context.wakeReason}`);
 
     const pc = new PaperclipClient(runId);
     const ctx = await loadAgentContext(
@@ -132,9 +133,12 @@ Now decide what to do. Return JSON:
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (err: any) {
-    console.error('CEO agent error:', err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    console.error('CEO agent error:', err.message, err.stack);
+    // Return 200 with error details so Paperclip doesn't mark as adapter_failed
+    return new Response(JSON.stringify({
+      success: false,
+      error: err.message,
+      summary: `CEO agent encountered an error: ${err.message}`,
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

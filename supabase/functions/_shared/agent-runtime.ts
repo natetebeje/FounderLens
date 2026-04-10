@@ -44,7 +44,10 @@ export class PaperclipClient {
   }
 
   // Agent identity
-  async getAgent(agentId: string) { return this.request('GET', `/agents/${agentId}`); }
+  async getAgent(agentId: string, companyId?: string) {
+    const qs = companyId ? `?companyId=${companyId}` : '';
+    return this.request('GET', `/agents/${agentId}${qs}`);
+  }
   async getOrgChart(companyId: string) { return this.request('GET', `/companies/${companyId}/org`); }
 
   // Goals
@@ -116,7 +119,7 @@ export async function loadAgentContext(
 ): Promise<AgentContext> {
   // Load from Paperclip in parallel
   const [agent, company, agents, goals, openIssues, skills] = await Promise.all([
-    pc.getAgent(agentId),
+    pc.getAgent(agentId, companyId),
     pc.getCompany(companyId),
     pc.getAgents(companyId),
     pc.getGoals(companyId),

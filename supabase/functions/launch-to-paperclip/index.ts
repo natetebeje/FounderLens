@@ -36,6 +36,17 @@ function str(val?: string, fallback = 'To be defined'): string {
   return val?.trim() || fallback;
 }
 
+// Stringify arbitrary structured data (objects, arrays, strings) for skill markdown.
+function blockify(val: any, fallback = 'Not available'): string {
+  if (val == null) return fallback;
+  if (typeof val === 'string') return val.trim() || fallback;
+  try {
+    return '```json\n' + JSON.stringify(val, null, 2) + '\n```';
+  } catch {
+    return fallback;
+  }
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 serve(async (req: Request) => {
@@ -78,13 +89,47 @@ serve(async (req: Request) => {
 
     const { data: workflow } = await serviceSupabase
       .from('validation_workflows')
-      .select('product_proposal, reddit_validation_results, paperclip_company_id')
+      .select(`
+        product_proposal,
+        reddit_validation_results,
+        automated_validation_results,
+        composite_score,
+        automated_score,
+        automated_recommendation,
+        status,
+        paperclip_company_id,
+        paperclip_company_url
+      `)
       .eq('opportunity_id', opportunityId)
+      .maybeSingle();
+
+    // Latest AI market intelligence snapshot for this opportunity.
+    const { data: marketIntelRow } = await serviceSupabase
+      .from('automated_market_intelligence')
+      .select('competitor_analysis, market_sizing, pricing_research, trends_analysis, swot_analysis, confidence_score')
+      .eq('opportunity_id', opportunityId)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     // Already launched — return existing
     if (workflow?.paperclip_company_id) {
-      const companyUrl = `${Deno.env.get('PAPERCLIP_API_URL')}/dashboard`;
+      // Read the stored URL; if missing, fetch the company prefix from Paperclip
+      let companyUrl = workflow.paperclip_company_url;
+      if (!companyUrl) {
+        try {
+          const existing = await pc('GET', `/companies/${workflow.paperclip_company_id}`);
+          const prefix = existing.prefix || existing.slug || workflow.paperclip_company_id;
+          companyUrl = `${Deno.env.get('PAPERCLIP_API_URL')}/${prefix}/dashboard`;
+          // Persist the correct URL for future use
+          await serviceSupabase
+            .from('validation_workflows')
+            .update({ paperclip_company_url: companyUrl })
+            .eq('opportunity_id', opportunityId);
+        } catch {
+          companyUrl = Deno.env.get('PAPERCLIP_API_URL') || 'https://build.founderlens.io';
+        }
+      }
       return new Response(JSON.stringify({
         success: true,
         alreadyLaunched: true,
@@ -95,6 +140,18 @@ serve(async (req: Request) => {
 
     const proposal = workflow?.product_proposal || {};
     const research = workflow?.reddit_validation_results || {};
+    const automatedAi = workflow?.automated_validation_results || {};
+
+    // Merge AI market intelligence: prefer the dedicated table, fall back to the
+    // camelCase blob stored on validation_workflows (same pattern the frontend uses).
+    const marketIntel = {
+      competitorAnalysis: marketIntelRow?.competitor_analysis ?? automatedAi?.competitorAnalysis ?? null,
+      marketSizing:       marketIntelRow?.market_sizing       ?? automatedAi?.marketSizing       ?? null,
+      pricingResearch:    marketIntelRow?.pricing_research    ?? automatedAi?.pricingResearch    ?? null,
+      trendsAnalysis:     marketIntelRow?.trends_analysis     ?? automatedAi?.trendsAnalysis     ?? null,
+      swotAnalysis:       marketIntelRow?.swot_analysis       ?? automatedAi?.swotAnalysis       ?? null,
+      confidenceScore:    marketIntelRow?.confidence_score    ?? workflow?.automated_score       ?? null,
+    };
 
     // ── Derive key strings from proposal + research ───────────────────────────
     const productName  = str(proposal.productName, opp.title);
@@ -106,8 +163,20 @@ serve(async (req: Request) => {
     const primaryCh    = str(proposal.goToMarket?.primaryChannel, 'Community / content marketing');
     const pricingModel = str(proposal.monetization?.model, 'subscription');
     const pricing      = str(proposal.monetization?.pricing, 'TBD');
-    const score        = research.opportunityScore || proposal.researchBacking?.opportunityScore || 0;
-    const dataPoints   = research.totalDataPoints || proposal.researchBacking?.dataPoints || 0;
+
+    // Composite score is the canonical paired AI+community validation score — prefer
+    // it, then fall back through Reddit research, proposal backing, and AI sub-scores.
+    const compositeScore = workflow?.composite_score || 0;
+    const score =
+      compositeScore ||
+      research.opportunityScore ||
+      proposal.researchBacking?.opportunityScore ||
+      workflow?.automated_score ||
+      marketIntel.confidenceScore ||
+      0;
+    const dataPoints    = research.totalDataPoints || proposal.researchBacking?.dataPoints || 0;
+    const recommendation = workflow?.automated_recommendation || research.recommendation || '';
+    const verdict       = research.verdict || '';
 
     const mustHaves    = proposal.mvpScope?.mustHave || research.demandSignals?.slice(0, 4) || [];
     const painPoints   = proposal.targetUser?.painPoints || research.painPoints || [];
@@ -117,6 +186,66 @@ serve(async (req: Request) => {
     const compApps     = (research.competitorApps || []).slice(0, 4);
     const nextSteps    = proposal.nextSteps || [];
 
+    // AI-discovered competitors (beyond the Reddit community view).
+    const aiCompetitors: string[] = (() => {
+      const ca: any = marketIntel.competitorAnalysis;
+      if (!ca) return [];
+      if (Array.isArray(ca?.competitors)) {
+        return ca.competitors
+          .slice(0, 5)
+          .map((c: any) =>
+            typeof c === 'string'
+              ? c
+              : [c.name || c.title, c.description || c.summary].filter(Boolean).join(' — '),
+          )
+          .filter(Boolean);
+      }
+      if (Array.isArray(ca?.topCompetitors)) return ca.topCompetitors.slice(0, 5);
+      return [];
+    })();
+
+    // Market sizing summary for goal/description/agent context.
+    const tam = marketIntel.marketSizing?.totalAddressableMarket
+      || marketIntel.marketSizing?.tam
+      || marketIntel.marketSizing?.tamEstimate
+      || '';
+    const sam = marketIntel.marketSizing?.serviceableAddressableMarket
+      || marketIntel.marketSizing?.sam
+      || '';
+    const som = marketIntel.marketSizing?.serviceableObtainableMarket
+      || marketIntel.marketSizing?.som
+      || '';
+    const marketSizingSummary = [
+      tam && `TAM: ${tam}`,
+      sam && `SAM: ${sam}`,
+      som && `SOM: ${som}`,
+    ].filter(Boolean).join(' · ');
+
+    const pricingSummary = marketIntel.pricingResearch
+      ? (marketIntel.pricingResearch.summary
+          || marketIntel.pricingResearch.recommendedPricing
+          || marketIntel.pricingResearch.analysis
+          || '')
+      : '';
+
+    const trendsSummary = marketIntel.trendsAnalysis
+      ? (marketIntel.trendsAnalysis.summary
+          || marketIntel.trendsAnalysis.overall
+          || marketIntel.trendsAnalysis.analysis
+          || '')
+      : '';
+    const trendKeys = Array.isArray(marketIntel.trendsAnalysis?.keyTrends)
+      ? marketIntel.trendsAnalysis.keyTrends.slice(0, 5)
+      : [];
+
+    const swot = marketIntel.swotAnalysis || {};
+    const swotStrengths = Array.isArray(swot.strengths)
+      ? swot.strengths.map((s: any) => typeof s === 'string' ? s : s?.text || s?.description).filter(Boolean).slice(0, 5)
+      : [];
+    const swotWeaknesses = Array.isArray(swot.weaknesses)
+      ? swot.weaknesses.map((s: any) => typeof s === 'string' ? s : s?.text || s?.description).filter(Boolean).slice(0, 5)
+      : [];
+
     const supabaseUrl  = Deno.env.get('SUPABASE_URL') ?? '';
 
     console.log(`\nLaunching AI company for: "${productName}"`);
@@ -124,22 +253,39 @@ serve(async (req: Request) => {
     // ─────────────────────────────────────────────────────────────────────────
     // STEP 1: Create Company
     // ─────────────────────────────────────────────────────────────────────────
+    const companyDescription = [
+      oneLiner,
+      `Validated by FounderLens — Composite Score: ${score}/100${verdict ? ` (${verdict} signal)` : ''} · ${dataPoints} community data points analyzed.`,
+      recommendation ? `Recommendation: ${recommendation}` : null,
+      `Problem: ${problem}`,
+      `Target User: ${persona}`,
+      marketSizingSummary ? `Market: ${marketSizingSummary}` : null,
+    ].filter(Boolean).join('\n\n');
+
     const company = await pc('POST', '/companies', {
       name: productName,
-      description: `${oneLiner}\n\nValidated by FounderLens — Score: ${score}/100 · ${dataPoints} data points analyzed.\n\nProblem: ${problem}\n\nTarget User: ${persona}`,
+      description: companyDescription,
       budgetMonthlyCents: 2000, // $20/mo default cap
     });
     const companyId = company.id;
-    console.log(`Company created: ${companyId}`);
+    const companyPrefix = company.prefix || company.slug || companyId;
+    console.log(`Company created: ${companyId} (prefix: ${companyPrefix})`);
 
     // ─────────────────────────────────────────────────────────────────────────
     // STEP 2: Create Company Goal
     // ─────────────────────────────────────────────────────────────────────────
+    const goalDescription = [
+      `## Mission\n${oneLiner}`,
+      `## Why This Matters\n${problem}`,
+      `## Success Criteria\n- MVP shipped covering all validated must-haves\n- 10 paying customers before adding v2 features\n- Primary acquisition channel (${primaryCh}) showing consistent conversion`,
+      `## Validation Backing\n- Composite Score: ${score}/100${verdict ? ` (${verdict} signal)` : ''}\n- Community Data Points: ${dataPoints}\n- Differentiator: ${differentiator}${recommendation ? `\n- Recommendation: ${recommendation}` : ''}${marketSizingSummary ? `\n- Market: ${marketSizingSummary}` : ''}`,
+    ].join('\n\n');
+
     const goal = await pc('POST', `/companies/${companyId}/goals`, {
       title: `Launch ${productName} and reach first 100 paying customers`,
-      description: `## Mission\n${oneLiner}\n\n## Why This Matters\n${problem}\n\n## Success Criteria\n- MVP shipped covering all validated must-haves\n- 10 paying customers before adding v2 features\n- Primary acquisition channel (${primaryCh}) showing consistent conversion\n\n## Research Backing\n- Opportunity Score: ${score}/100\n- Data Points: ${dataPoints}\n- Differentiator: ${differentiator}`,
+      description: goalDescription,
       level: 'company',
-      status: 'in_progress', // Paperclip: backlog|planned|in_progress|completed|cancelled
+      status: 'active', // Paperclip goal enum: planned|active|achieved|cancelled
     });
     console.log(`Goal created: ${goal.id}`);
 
@@ -182,8 +328,10 @@ TARGET USER: ${persona}
 
 YOUR UNFAIR ADVANTAGE: ${unfairAdv}
 
-RESEARCH BACKING: This opportunity was validated by FounderLens with a score of ${score}/100 across ${dataPoints} real data points — Reddit, web search, App Store, and analogous markets.
-
+VALIDATION BACKING: FounderLens validated this opportunity with a composite score of ${score}/100${verdict ? ` (${verdict} signal)` : ''} — combining AI market intelligence and ${dataPoints} community data points from Reddit, web search, App Store, and analogous markets.
+${recommendation ? `\nRECOMMENDATION: ${recommendation}\n` : ''}
+${swotStrengths.length ? `STRATEGIC STRENGTHS (from SWOT):\n${list(swotStrengths)}\n` : ''}
+${swotWeaknesses.length ? `STRATEGIC WEAKNESSES TO MANAGE (from SWOT):\n${list(swotWeaknesses)}\n` : ''}
 YOUR RESPONSIBILITIES:
 - Review all open issues every heartbeat and ensure the team is unblocked
 - Set the top 3 priorities for the week every Monday
@@ -209,7 +357,11 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
       adapterType: 'http',
       adapterConfig: {
         url: `${supabaseUrl}/functions/v1/paperclip-agent-ceo`,
-        headers: { 'x-founderlens-opportunity-id': opportunityId },
+        headers: {
+          'x-founderlens-opportunity-id': opportunityId,
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+          'apikey': Deno.env.get('SUPABASE_ANON_KEY'),
+        },
         timeoutSec: 120,
       },
       prompt: ceoSystemPrompt,
@@ -229,10 +381,14 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
         adapterType: 'http',
         adapterConfig: {
           url: `${supabaseUrl}/functions/v1/paperclip-agent-cto`,
-          headers: { 'x-founderlens-opportunity-id': opportunityId },
+          headers: {
+          'x-founderlens-opportunity-id': opportunityId,
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+          'apikey': Deno.env.get('SUPABASE_ANON_KEY'),
+        },
           timeoutSec: 120,
         },
-        prompt: `You are the CTO of ${productName}.\n\nMISSION: ${oneLiner}\n\nMVP MUST-HAVES (build in this order):\n${list(mustHaves)}\n\nKEY PAIN POINTS (these inform what we build first):\n${list(painPoints)}\n\nYOUR RESPONSIBILITIES:\n- Break down MVP must-haves into specific, actionable engineering issues\n- Estimate complexity (S/M/L) on every issue\n- Write ADRs for significant architecture decisions\n- Ensure Engineer always has a clearly defined task\n- Always prefer the simplest stack that can reach first revenue\n\nOUT OF SCOPE FOR V1:\n${list(proposal.mvpScope?.outOfScope, 'None specified yet')}`,
+        prompt: `You are the CTO of ${productName}.\n\nMISSION: ${oneLiner}\n\nMVP MUST-HAVES (build in this order):\n${list(mustHaves)}\n\nKEY PAIN POINTS (these inform what we build first):\n${list(painPoints)}\n${trendsSummary || trendKeys.length ? `\nMARKET TRENDS TO ALIGN BUILD WITH:\n${trendsSummary ? trendsSummary + '\n' : ''}${trendKeys.length ? list(trendKeys) : ''}\n` : ''}\nYOUR RESPONSIBILITIES:\n- Break down MVP must-haves into specific, actionable engineering issues\n- Estimate complexity (S/M/L) on every issue\n- Write ADRs for significant architecture decisions\n- Ensure Engineer always has a clearly defined task\n- Always prefer the simplest stack that can reach first revenue\n\nOUT OF SCOPE FOR V1:\n${list(proposal.mvpScope?.outOfScope, 'None specified yet')}`,
         budgetMonthlyCents: 500,
       }),
 
@@ -245,10 +401,14 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
         adapterType: 'http',
         adapterConfig: {
           url: `${supabaseUrl}/functions/v1/paperclip-agent-engineer`,
-          headers: { 'x-founderlens-opportunity-id': opportunityId },
+          headers: {
+          'x-founderlens-opportunity-id': opportunityId,
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+          'apikey': Deno.env.get('SUPABASE_ANON_KEY'),
+        },
           timeoutSec: 120,
         },
-        prompt: `You are the Lead Engineer of ${productName}.\n\nMISSION: ${oneLiner}\n\nYour output for every task must be one of: working code, a detailed implementation spec, or an architecture document. Always post output as a structured comment on the issue. Mark blockers explicitly — never silently stall.\n\nMVP SCOPE:\n${list(mustHaves)}\n\nIMPLEMENTATION FORMAT:\n## Implementation Plan\n## Key Technical Decisions\n## Acceptance Criteria Check\n## Files Changed`,
+        prompt: `You are the Lead Engineer of ${productName}.\n\nMISSION: ${oneLiner}\n\nYour output for every task must be one of: working code, a detailed implementation spec, or an architecture document. Always post output as a structured comment on the issue. Mark blockers explicitly — never silently stall.\n\nMVP SCOPE:\n${list(mustHaves)}\n${trendsSummary ? `\nMARKET CONTEXT (trends your build should reflect):\n${trendsSummary}\n` : ''}\nIMPLEMENTATION FORMAT:\n## Implementation Plan\n## Key Technical Decisions\n## Acceptance Criteria Check\n## Files Changed`,
         budgetMonthlyCents: 400,
       }),
 
@@ -261,10 +421,14 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
         adapterType: 'http',
         adapterConfig: {
           url: `${supabaseUrl}/functions/v1/paperclip-agent-cmo`,
-          headers: { 'x-founderlens-opportunity-id': opportunityId },
+          headers: {
+          'x-founderlens-opportunity-id': opportunityId,
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+          'apikey': Deno.env.get('SUPABASE_ANON_KEY'),
+        },
           timeoutSec: 120,
         },
-        prompt: `You are the CMO of ${productName}.\n\nTARGET USER: ${persona}\n\nPRIMARY ACQUISITION CHANNEL: ${primaryCh}\nALL CHANNELS:\n${list(channels)}\n\nCOMPETITOR GAPS WE WIN ON:\n${competitors.map(c => `- vs ${c.name}: ${c.gap}`).join('\n') || list(proposal.marketOpportunity?.competitorGaps)}\n\nCONTENT PRINCIPLES:\n- Lead with the problem, not the solution\n- Use the exact language your target user uses\n- Reference competitor gaps when positioning\n- Every piece of content must pass: "would my target user share this?"\n\nYOUR RESPONSIBILITIES:\n- Draft 1 piece of content per session (post, email, landing copy, campaign brief)\n- Propose acquisition experiments based on research data\n- 3x/week community posts, 1x/week long-form content`,
+        prompt: `You are the CMO of ${productName}.\n\nTARGET USER: ${persona}\n\nPRIMARY ACQUISITION CHANNEL: ${primaryCh}\nALL CHANNELS:\n${list(channels)}\n\nCOMPETITOR GAPS WE WIN ON (from community research):\n${competitors.map(c => `- vs ${c.name}: ${c.gap}`).join('\n') || list(proposal.marketOpportunity?.competitorGaps)}\n${aiCompetitors.length ? `\nAI-DISCOVERED COMPETITIVE LANDSCAPE (from market intelligence):\n${list(aiCompetitors)}\n` : ''}\nCONTENT PRINCIPLES:\n- Lead with the problem, not the solution\n- Use the exact language your target user uses\n- Reference competitor gaps when positioning\n- Every piece of content must pass: "would my target user share this?"\n\nYOUR RESPONSIBILITIES:\n- Draft 1 piece of content per session (post, email, landing copy, campaign brief)\n- Propose acquisition experiments based on research data\n- 3x/week community posts, 1x/week long-form content`,
         budgetMonthlyCents: 300,
       }),
 
@@ -277,10 +441,14 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
         adapterType: 'http',
         adapterConfig: {
           url: `${supabaseUrl}/functions/v1/paperclip-agent-growth`,
-          headers: { 'x-founderlens-opportunity-id': opportunityId },
+          headers: {
+          'x-founderlens-opportunity-id': opportunityId,
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+          'apikey': Deno.env.get('SUPABASE_ANON_KEY'),
+        },
           timeoutSec: 120,
         },
-        prompt: `You are the Growth Lead of ${productName}.\n\nTARGET USER: ${persona}\nPRIMARY CHANNEL: ${primaryCh}\n\nVALIDATED COMMUNITIES (from FounderLens research — start here):\n${research.sources?.analogousMarkets?.markets ? list(research.sources.analogousMarkets.markets) : list(channels)}\n\nEXPERIMENT FRAMEWORK (every experiment must have):\n- Hypothesis: If we [action], then [metric] will [change] because [reason]\n- Channel, Audience, Message, CTA, Success metric, Duration\n\nNever propose an experiment without a hypothesis. Never report results without a "what we learned" conclusion.`,
+        prompt: `You are the Growth Lead of ${productName}.\n\nTARGET USER: ${persona}\nPRIMARY CHANNEL: ${primaryCh}\n\nVALIDATED COMMUNITIES (from FounderLens research — start here):\n${research.sources?.analogousMarkets?.markets ? list(research.sources.analogousMarkets.markets) : list(channels)}\n${marketSizingSummary ? `\nMARKET SIZING (bound your targets against this):\n${marketSizingSummary}\n` : ''}${pricingSummary ? `\nPRICING RESEARCH:\n${pricingSummary}\n` : ''}\nEXPERIMENT FRAMEWORK (every experiment must have):\n- Hypothesis: If we [action], then [metric] will [change] because [reason]\n- Channel, Audience, Message, CTA, Success metric, Duration\n\nNever propose an experiment without a hypothesis. Never report results without a "what we learned" conclusion.`,
         budgetMonthlyCents: 200,
       }),
     ]);
@@ -296,7 +464,11 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
       adapterType: 'http',
       adapterConfig: {
         url: `${supabaseUrl}/functions/v1/paperclip-agent-branding`,
-        headers: { 'x-founderlens-opportunity-id': opportunityId },
+        headers: {
+          'x-founderlens-opportunity-id': opportunityId,
+          'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+          'apikey': Deno.env.get('SUPABASE_ANON_KEY'),
+        },
         timeoutSec: 120,
       },
       prompt: `You are the Brand & Identity Lead of ${productName}. Your first task is to generate a complete brand identity package: 3 name options with domain availability, taglines, brand voice, color palette, logo concept, and social handles. Post results as a structured issue. On subsequent heartbeats, refine based on founder feedback in issue comments.`,
@@ -367,7 +539,7 @@ DECISION FRAMEWORK: Ship small things fast. Talk to users every week. Evidence o
     const marketResearchSkill = `# Market Research — ${productName}
 
 Validated by FounderLens Research Engine
-Score: ${score}/100 | Data Points: ${dataPoints} | Date: ${new Date().toISOString().split('T')[0]}
+Composite Score: ${score}/100 | Community Data Points: ${dataPoints} | Date: ${new Date().toISOString().split('T')[0]}
 
 ## Evidence of Demand
 ${list(research.demandSignals)}
@@ -375,7 +547,7 @@ ${list(research.demandSignals)}
 ## Pain Points (from live community research)
 ${list(painPoints)}
 
-## Competitor Landscape
+## Competitor Landscape (community signal)
 ${competitors.map((c: any) => `- **${c.name}**: ${c.description}\n  Gap we exploit: ${c.gap}`).join('\n') || 'No direct competitors found — potential market gap.'}
 
 ## App Store Competitors
@@ -387,11 +559,30 @@ ${list(research.marketGaps)}
 ## Key Risks
 ${list(risks)}
 
+---
+
+## AI Market Intelligence
+
+### Market Sizing
+${blockify(marketIntel.marketSizing)}
+
+### Competitor Analysis (AI)
+${blockify(marketIntel.competitorAnalysis)}
+
+### Pricing Research
+${blockify(marketIntel.pricingResearch)}
+
+### Trends Analysis
+${blockify(marketIntel.trendsAnalysis)}
+
+### SWOT Analysis
+${blockify(marketIntel.swotAnalysis)}
+
 ## How to Use This Skill
-- **CEO**: Use pain points to prioritize backlog. Highest-pain = built first.
-- **CMO**: Use community data to mirror how users talk. Write in their language.
-- **Growth**: The competitors above are where your users currently go. Research their complaints.
-- **Engineer**: Build must-haves in pain-point order, not feature-wishlist order.`;
+- **CEO**: Use pain points to prioritize backlog. Highest-pain = built first. Use SWOT to guide strategic bets.
+- **CMO**: Use community data to mirror how users talk. Reference the AI competitor analysis when positioning.
+- **Growth**: Use market sizing to bound realistic targets. Use pricing research when proposing experiments.
+- **Engineer**: Build must-haves in pain-point order, not feature-wishlist order. Align with trends where relevant.`;
 
     const proposalSkill = `# Product Proposal — ${productName}
 
@@ -438,6 +629,77 @@ All channels: ${channels.join(', ') || 'TBD'}
 Launch strategy: ${str(proposal.goToMarket?.launchStrategy)}
 First 30 days: ${str(proposal.goToMarket?.first30Days)}`;
 
+    // Full validation snapshot — every fact on the confirmation page reachable to agents.
+    const validationReportSkill = `# Validation Report — ${productName}
+
+Generated: ${new Date().toISOString().split('T')[0]}
+
+## Verdict
+- Composite Score: ${score}/100${verdict ? ` (${verdict} signal)` : ''}
+- Automated (AI) Score: ${workflow?.automated_score ?? 'N/A'}
+- Community (Reddit) Score: ${research.researchScore ?? research.opportunityScore ?? 'N/A'}
+- Recommendation: ${recommendation || 'N/A'}
+- Workflow Status: ${workflow?.status || 'N/A'}
+
+## Brief Summary
+${str(research.briefSummary || research.analysis?.summary, 'Not available')}
+
+## Community Research (Reddit + Web)
+
+### Pain Points
+${list(research.painPoints)}
+
+### Demand Signals
+${list(research.demandSignals)}
+
+### Market Gaps
+${list((research.marketGaps || []).map((g: any) => typeof g === 'string' ? g : g?.gap).filter(Boolean))}
+
+### Risks
+${list(research.risks)}
+
+### Competitors
+${competitors.map((c: any) => `- **${c.name}**: ${c.description || ''}\n  Gap: ${c.gap || ''}`).join('\n') || 'None found.'}
+
+### App Store Competitors
+${compApps.map((a: any) => `- ${a.name} (${a.rating}★): ${(a.description || '').substring(0, 120)}`).join('\n') || 'None found.'}
+
+### Web Citations
+${(research.webCitations || []).map((c: any) => `- [${c.title || 'source'}](${c.url || ''})`).join('\n') || 'None.'}
+
+### Data Quality
+- Quality: ${research.dataQuality || 'moderate'}
+- Total data points: ${dataPoints}
+
+### Full Report
+${str(research.fullReport, 'Not available')}
+
+---
+
+## AI Market Intelligence
+
+### Confidence Score
+${marketIntel.confidenceScore ?? 'N/A'}
+
+### Market Sizing
+${blockify(marketIntel.marketSizing)}
+
+### Competitor Analysis
+${blockify(marketIntel.competitorAnalysis)}
+
+### Pricing Research
+${blockify(marketIntel.pricingResearch)}
+
+### Trends Analysis
+${blockify(marketIntel.trendsAnalysis)}
+
+### SWOT Analysis
+${blockify(marketIntel.swotAnalysis)}
+
+## How to Use This Skill
+Any agent can consult this skill when a decision needs grounding in validation evidence.
+Citations from here are the most authoritative source of ground truth for this company.`;
+
     await Promise.all([
       pc('POST', `/companies/${companyId}/skills`, {
         name: 'Market Research',
@@ -449,12 +711,17 @@ First 30 days: ${str(proposal.goToMarket?.first30Days)}`;
         content: proposalSkill,
         agentIds: [ceo.id, cto.id, engineer.id, cmo.id, growth.id],
       }).catch(() => console.log('Skills endpoint not available — skipping')),
+      pc('POST', `/companies/${companyId}/skills`, {
+        name: 'Validation Report',
+        content: validationReportSkill,
+        agentIds: [ceo.id, cto.id, engineer.id, cmo.id, growth.id],
+      }).catch(() => console.log('Skills endpoint not available — skipping')),
     ]);
 
     // ─────────────────────────────────────────────────────────────────────────
     // STEP 7: Persist to Supabase
     // ─────────────────────────────────────────────────────────────────────────
-    const companyUrl = `${Deno.env.get('PAPERCLIP_API_URL')}/dashboard`;
+    const companyUrl = `${Deno.env.get('PAPERCLIP_API_URL')}/${companyPrefix}/dashboard`;
 
     await serviceSupabase
       .from('validation_workflows')
@@ -467,6 +734,26 @@ First 30 days: ${str(proposal.goToMarket?.first30Days)}`;
       .eq('opportunity_id', opportunityId);
 
     console.log(`\n✓ AI company launched: ${productName} (${companyId})`);
+
+    // Fire an immediate agent round so the branding package, first engineering
+    // spec, and first marketing draft appear within ~60s of launch. Not awaited:
+    // agent runs can take 30-90s and we don't want to delay the UI response.
+    // Paperclip's own heartbeat (default 3600s) + the 5-minute pg_cron tick will
+    // keep things moving from here on.
+    fetch(`${supabaseUrl}/functions/v1/paperclip-agent-tick`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+        'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY') ?? ''}`,
+      },
+      body: JSON.stringify({
+        mode: 'one',
+        companyId,
+        opportunityId,
+        wakeReason: 'initial-launch',
+      }),
+    }).catch(err => console.error('Initial agent tick failed (non-fatal):', err));
 
     return new Response(JSON.stringify({
       success: true,

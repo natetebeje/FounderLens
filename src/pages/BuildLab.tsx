@@ -7,13 +7,14 @@ import { BuildFilters } from "@/components/build/BuildFilters";
 import { BuildTracksGrid } from "@/components/build/BuildTracksGrid";
 import { BuildLabSkeleton } from "@/components/ui/loading-skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { getBuildTrackForOpportunity } from "@/utils/build-mappings";
+// build-mappings.ts still exists for future use but not needed for opportunity→build redirect
 import { useSubscription } from "@/hooks/useSubscription";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Crown, Building2, BookOpen } from "lucide-react";
 import { AICompaniesTab } from "@/components/AICompaniesTab";
+import { BuildPrelaunchView } from "@/components/build/BuildPrelaunchView";
 
 interface BuildTrack {
   id: string;
@@ -41,6 +42,7 @@ const BuildLab = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [difficultyFilter, setDifficultyFilter] = useState("all");
+  const [prelaunchOpportunityId, setPrelaunchOpportunityId] = useState<string | null>(null);
   const { toast } = useToast();
   const { subscribed } = useSubscription();
   const { user } = useAuth();
@@ -51,19 +53,43 @@ const BuildLab = () => {
     setSearchParams(tab === 'companies' ? {} : { tab });
   };
 
-  // Handle auto-redirect from opportunities
+  // Handle entry from opportunities — show pre-launch confirmation or jump to launched company
   useEffect(() => {
     const fromSource = searchParams.get('from');
     const opportunityId = searchParams.get('id');
 
-    if (fromSource === 'opportunity' && opportunityId) {
-      const buildTrack = getBuildTrackForOpportunity(opportunityId);
-      if (buildTrack) {
-        navigate(`/build/${buildTrack.buildTrackSlug}?from=opportunity&id=${opportunityId}`);
-        return;
-      }
+    if (fromSource !== 'opportunity' || !opportunityId) {
+      setPrelaunchOpportunityId(null);
+      return;
     }
-  }, [searchParams, navigate]);
+
+    let cancelled = false;
+    const checkLaunchState = async () => {
+      const { data: workflow } = await supabase
+        .from('validation_workflows')
+        .select('paperclip_company_id')
+        .eq('opportunity_id', opportunityId)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      // If a company already exists we skip the pre-launch view and fall through to the companies list.
+      // Do NOT call setActiveTab here — it would clear the ?from/?id search params via setSearchParams({}),
+      // which re-triggers this effect and wipes prelaunchOpportunityId before render.
+      setPrelaunchOpportunityId(workflow?.paperclip_company_id ? null : opportunityId);
+    };
+
+    checkLaunchState();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams]);
+
+  const exitPrelaunch = () => {
+    setPrelaunchOpportunityId(null);
+    // Drop the ?from=opportunity query params so refresh doesn't re-enter the flow
+    setSearchParams({});
+  };
 
   useEffect(() => {
     const fetchTracks = async () => {
@@ -132,7 +158,15 @@ const BuildLab = () => {
 
         {/* ── My Companies tab ── */}
         {activeTab === 'companies' && (
-          <AICompaniesTab />
+          prelaunchOpportunityId ? (
+            <BuildPrelaunchView
+              opportunityId={prelaunchOpportunityId}
+              onLaunched={exitPrelaunch}
+              onBack={exitPrelaunch}
+            />
+          ) : (
+            <AICompaniesTab />
+          )
         )}
 
         {/* ── Learn tab ── */}

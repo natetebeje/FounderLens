@@ -122,9 +122,9 @@ Produce your content output. Return JSON:
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (err: any) {
-    console.error('CMO agent error:', err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    console.error('CMO agent error:', err.message);
+    return new Response(JSON.stringify({ success: false, error: err.message, summary: `CMO error: ${err.message}` }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });

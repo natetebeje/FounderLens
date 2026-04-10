@@ -111,9 +111,9 @@ Decide what to do. Return JSON:
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (err: any) {
-    console.error('CTO agent error:', err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    console.error('CTO agent error:', err.message);
+    return new Response(JSON.stringify({ success: false, error: err.message, summary: `CTO error: ${err.message}` }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });

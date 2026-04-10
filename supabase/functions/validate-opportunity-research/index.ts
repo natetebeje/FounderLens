@@ -1,5 +1,10 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  RedditPost,
+  searchReddit as searchRedditShared,
+  generateRedditSearchPlan,
+} from '../_shared/reddit-search.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -188,68 +193,6 @@ async function searchAppStore(
   }
 
   return apps.sort((a, b) => b.ratingCount - a.ratingCount).slice(0, 8);
-}
-
-// ============================================================================
-// STEP 3: REDDIT SEARCH (PullPush - two-pass strategy)
-// ============================================================================
-
-async function searchReddit(
-  queries: string[],
-  subreddits: string[],
-  limit = 25
-): Promise<{ title: string; subreddit: string; score: number; selftext: string; permalink: string; topComments: string[] }[]> {
-  const all: any[] = [];
-  const targetSubSet = new Set(subreddits.map(s => s.toLowerCase()));
-
-  // Pass 1: global topic search
-  for (const query of queries.slice(0, 5)) {
-    try {
-      const url = new URL('https://api.pullpush.io/reddit/search/submission/');
-      url.searchParams.set('q', query);
-      url.searchParams.set('size', '20');
-      url.searchParams.set('score', '>0');
-      const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
-      if (!res.ok) continue;
-      const data = await res.json();
-      for (const p of data?.data ?? []) {
-        if (!p.title) continue;
-        all.push({ title: p.title, subreddit: p.subreddit || 'unknown', score: p.score || 0, selftext: (p.selftext || '').substring(0, 500), permalink: p.permalink ? `https://reddit.com${p.permalink}` : '', topComments: [] });
-      }
-      await new Promise(r => setTimeout(r, 300));
-    } catch { /* ignore */ }
-  }
-
-  // Pass 2: subreddit-scoped
-  for (const sub of subreddits.slice(0, 4)) {
-    try {
-      const url = new URL('https://api.pullpush.io/reddit/search/submission/');
-      url.searchParams.set('q', queries[0] || '');
-      url.searchParams.set('subreddit', sub);
-      url.searchParams.set('size', '10');
-      url.searchParams.set('score', '>0');
-      const res = await fetch(url.toString(), { headers: { 'User-Agent': 'FounderLens/1.0' } });
-      if (!res.ok) continue;
-      const data = await res.json();
-      for (const p of data?.data ?? []) {
-        if (!p.title) continue;
-        all.push({ title: p.title, subreddit: p.subreddit || sub, score: p.score || 0, selftext: (p.selftext || '').substring(0, 500), permalink: p.permalink ? `https://reddit.com${p.permalink}` : '', topComments: [] });
-      }
-      await new Promise(r => setTimeout(r, 300));
-    } catch { /* ignore */ }
-  }
-
-  // Dedup + rank target subs first
-  const seen = new Map<string, any>();
-  for (const p of all) { const key = p.permalink || p.title; if (!seen.has(key)) seen.set(key, p); }
-  const unique = [...seen.values()];
-  unique.sort((a, b) => {
-    const aIn = targetSubSet.has(a.subreddit.toLowerCase()) ? 1 : 0;
-    const bIn = targetSubSet.has(b.subreddit.toLowerCase()) ? 1 : 0;
-    if (aIn !== bIn) return bIn - aIn;
-    return b.score - a.score;
-  });
-  return unique.slice(0, limit);
 }
 
 // ============================================================================
@@ -461,10 +404,18 @@ DESCRIPTION: ${opportunity.description}
 TARGET MARKET: ${opportunity.targetMarket}
 PROBLEM: ${opportunity.problemStatement}
 
+CRITICAL: The Reddit queries are the MOST IMPORTANT part of this plan. Reddit is where real people discuss real frustrations. Generate queries that will find posts where people are:
+1. Complaining about the EXACT problem this product solves
+2. Asking for help or recommendations in this exact space
+3. Sharing their frustrations with existing solutions
+4. Discussing workarounds they currently use
+
+Use the EXACT words and phrases that real users would type — NOT startup jargon.
+
 Return JSON:
 {
-  "queries": ["6 specific Reddit/community search queries using TARGET USERS language, not startup jargon"],
-  "subreddits": ["10 subreddits WHERE THE TARGET USERS actually hang out (not r/entrepreneur unless the product is for entrepreneurs)"],
+  "queries": ["8 specific Reddit search queries — use natural language like 'meal planning after baby', 'struggling with X', 'need help with Y', 'best app for Z'. Include problem-focused AND solution-seeking queries"],
+  "subreddits": ["12 subreddits WHERE THE TARGET USERS actually hang out — think about where these specific people would post (parenting subs, health subs, hobby subs, location subs, etc). NOT r/entrepreneur or r/startups unless the product is literally for entrepreneurs"],
   "keywords": ["10 relevance keywords specific to this topic"],
   "analogousMarkets": ["3-4 analogous communities or markets that have solved a similar problem — e.g. for Ethiopian diaspora networking, think Nigerian diaspora, Indian diaspora, Jewish professional networks"],
   "webSearchQueries": [
@@ -506,6 +457,7 @@ async function synthesizeResearch(
   opportunity: { title: string; description: string; targetMarket: string; problemStatement: string },
   data: {
     redditPosts: any[];
+    redditWebSearch: WebSearchResult;
     communityEvidence: WebSearchResult;
     competitorApps: AppStoreApp[];
     competitorEvidence: WebSearchResult;
@@ -518,14 +470,19 @@ async function synthesizeResearch(
   },
   apiKey: string
 ): Promise<ResearchReport> {
-  const totalDataPoints = data.redditPosts.length + data.communityEvidence.citations.length + data.competitorApps.length + data.competitorEvidence.citations.length + data.twitterEvidence.citations.length + data.analogousMarkets.citations.length + data.hackerNewsPosts.length + data.quoraForumResults.length;
+  const totalDataPoints = data.redditPosts.length + data.redditWebSearch.citations.length + data.communityEvidence.citations.length + data.competitorApps.length + data.competitorEvidence.citations.length + data.twitterEvidence.citations.length + data.analogousMarkets.citations.length + data.hackerNewsPosts.length + data.quoraForumResults.length;
 
   const dataQuality: 'rich' | 'moderate' | 'sparse' = totalDataPoints >= 20 ? 'rich' : totalDataPoints >= 8 ? 'moderate' : 'sparse';
 
-  // Build context for the AI
-  const redditContext = data.redditPosts.slice(0, 10).map((p, i) =>
-    `[Reddit ${i + 1}] r/${p.subreddit} | ${p.score}pts | "${p.title}"\n${p.selftext.slice(0, 200)}`
+  // Build context for the AI — Reddit is the primary signal
+  const redditContext = data.redditPosts.slice(0, 12).map((p, i) =>
+    `[Reddit ${i + 1}] r/${p.subreddit} | ${p.score}pts | "${p.title}"\n${p.selftext.slice(0, 250)}`
   ).join('\n\n');
+
+  // Reddit web search summary (from OpenAI web search with site:reddit.com)
+  const redditWebContext = data.redditWebSearch.summary
+    ? `\n\nREDDIT WEB SEARCH FINDINGS:\n${data.redditWebSearch.summary.slice(0, 800)}`
+    : '';
 
   // HackerNews context
   const hnContext = data.hackerNewsPosts.length > 0
@@ -571,6 +528,7 @@ async function synthesizeResearch(
   }
 
   const rawCitations = [
+    ...data.redditWebSearch.citations,
     ...data.communityEvidence.citations,
     ...data.competitorEvidence.citations,
     ...data.twitterEvidence.citations,
@@ -628,8 +586,11 @@ Problem: ${opportunity.problemStatement}
 
 ## EVIDENCE GATHERED (${totalDataPoints} total data points, quality: ${dataQuality})
 
+### PRIMARY SOURCE — REDDIT (most important signal)
+Reddit is where real users discuss real frustrations. This is the strongest validation signal.
 ${redditPosts_context(data.redditPosts)}
 
+### SECONDARY SOURCES
 ${webContext}
 
 ${appContext}
@@ -660,12 +621,17 @@ Provide a comprehensive startup research report. JSON format:
 
 opportunityScore: CRITICAL — Score each opportunity based on actual evidence strength. Do NOT default to 65.
 
-SCORING (calculate step by step before deciding):
-Step 1 — Reddit evidence: 0 relevant posts = start at 30. 1-5 posts = 40. 6-15 posts = 55. 16+ posts = 65.
-Step 2 — Web search quality: citations directly about this problem = +10. Citations about unrelated topics = -10.
-Step 3 — Competitor apps: 0 apps = +15 (market gap!). 1-3 apps with gaps = +5. 4+ apps with poor reviews = +10.
-Step 4 — Analogous market strength: strong analogous evidence (similar community solved it) = +15. Weak = +0.
-Step 5 — Problem urgency: Is this a daily/weekly pain? = +10. Nice-to-have? = +0.
+SCORING (calculate step by step — Reddit is THE primary signal):
+Step 1 — Reddit evidence (MOST IMPORTANT — 50% of score):
+  0 relevant posts = start at 20. This means users aren't actively frustrated about this problem.
+  1-3 posts = 35. Minimal signal.
+  4-10 posts with real frustration = 50. Solid signal.
+  10-20 posts across multiple subreddits = 65. Strong demand signal.
+  20+ posts with high engagement (50+ upvotes) = 75. Very strong.
+Step 2 — Quality of Reddit posts: Posts with 50+ upvotes where users describe specific pain = +10. Generic low-engagement posts = +0.
+Step 3 — Web search + competitor evidence: citations directly about this problem = +5. Good competitor gaps = +5.
+Step 4 — Analogous market strength: strong analogous evidence = +10. Weak = +0.
+Step 5 — Problem urgency: Daily/weekly pain? = +5. Nice-to-have? = +0.
 
 EXAMPLES to calibrate:
 - Postpartum nutrition app: Reddit r/beyondthebump has 50+ posts about meal struggles. Multiple apps but none tailored. Score: 72.
@@ -676,8 +642,10 @@ EXAMPLES to calibrate:
 Each opportunity MUST receive a score reflecting ITS specific evidence. Scores MUST vary significantly across different opportunities.`;
 
   function redditPosts_context(posts: any[]): string {
-    if (posts.length === 0) return 'REDDIT: No relevant posts found.';
-    return `REDDIT POSTS (${posts.length} found):\n${posts.slice(0, 8).map((p, i) => `[Reddit ${i + 1}] r/${p.subreddit} (${p.score}pts): "${p.title}"\n${p.selftext.slice(0, 150)}`).join('\n\n')}`;
+    const postsBlock = posts.length === 0
+      ? 'No direct Reddit API posts found.'
+      : `REDDIT POSTS (${posts.length} found — this is the strongest validation signal):\n${posts.slice(0, 12).map((p, i) => `[Reddit ${i + 1}] r/${p.subreddit} (${p.score} upvotes): "${p.title}"\n${p.selftext.slice(0, 250)}`).join('\n\n')}`;
+    return `${postsBlock}${redditWebContext}`;
   }
 
   try {
@@ -716,13 +684,15 @@ Each opportunity MUST receive a score reflecting ITS specific evidence. Scores M
     function computeEvidenceScore(): number {
       let score = 30; // baseline
 
-      // Reddit evidence
+      // Reddit evidence (direct posts + web search citations)
       const redditCount = data.redditPosts.length;
-      if (redditCount === 0) score += 0;
-      else if (redditCount <= 3) score += 5;
-      else if (redditCount <= 10) score += 12;
-      else if (redditCount <= 20) score += 18;
-      else score += 22;
+      const redditWebCits = data.redditWebSearch.citations.filter((c: any) => c.url?.includes('reddit.com')).length;
+      const redditTotal = Math.max(redditCount, redditWebCits);
+      if (redditTotal === 0) score += 0;
+      else if (redditTotal <= 3) score += 8;
+      else if (redditTotal <= 10) score += 15;
+      else if (redditTotal <= 20) score += 20;
+      else score += 25;
 
       // Web search quality — community citations about this specific topic
       const webCits = data.communityEvidence.citations.length + data.twitterEvidence.citations.length;
@@ -851,25 +821,38 @@ serve(async (req: Request) => {
     console.log(`\n🔬 FounderLens Research Engine v2 — "${title}"`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-    // Step 1: Generate research plan
-    console.log('📋 Step 1: Generating research plan...');
-    const plan = await generateSearchPlan(opportunity, apiKey);
-    console.log(`   Queries: ${plan.queries.slice(0, 3).join(' | ')}`);
-    console.log(`   Subreddits: ${plan.subreddits.slice(0, 5).join(', ')}`);
+    // Step 1: Generate research plans
+    console.log('📋 Step 1: Generating research plans...');
+    const [plan, redditPlan] = await Promise.all([
+      generateSearchPlan(opportunity, apiKey),
+      generateRedditSearchPlan(
+        { title, description, target_market: targetMarket, opportunity_tags: tags },
+        apiKey
+      ),
+    ]);
+    console.log(`   General plan — Queries: ${plan.queries.slice(0, 3).join(' | ')}`);
     console.log(`   Analogous markets: ${plan.analogousMarkets.join(', ')}`);
+    console.log(`   Reddit plan — Queries: ${redditPlan.queries.slice(0, 3).join(' | ')}`);
+    console.log(`   Reddit keywords: ${redditPlan.keywords.slice(0, 5).join(', ')}`);
 
-    // Merge client subreddits with AI plan
-    const subreddits = [...new Set([...plan.subreddits, ...clientSubreddits])].slice(0, 14);
+    // Merge client queries with AI plan (for non-Reddit searches)
+    const subreddits = [...new Set([...redditPlan.subreddits, ...plan.subreddits, ...clientSubreddits])].slice(0, 10);
     const queries = clientQueries.length > 0
       ? [...new Set([...clientQueries, ...plan.queries])].slice(0, 10)
       : plan.queries;
 
-    // Step 2: Search all 9 sources
-    // Batch 1: Non-OpenAI sources (free APIs, no rate limits)
-    console.log('\n📡 Step 2a: Searching free APIs in parallel...');
-    const [redditPosts, competitorApps, hackerNewsPosts, quoraForumResults, googleTrendsData] = await Promise.all([
-      searchReddit(queries, subreddits, 25).then(posts => {
-        console.log(`   ✓ Reddit: ${posts.length} posts`);
+    // Reddit-specific queries and keywords from the dedicated Reddit plan
+    const redditQueries = clientQueries.length > 0
+      ? [...new Set([...clientQueries, ...redditPlan.queries])].slice(0, 10)
+      : redditPlan.queries;
+    const redditKeywords = redditPlan.keywords;
+
+    // Step 2: Search all sources
+    // Batch 1: Non-OpenAI sources in parallel
+    console.log('\n📡 Step 2a: Searching APIs in parallel...');
+    const [rawRedditPosts, competitorApps, hackerNewsPosts, quoraForumResults, googleTrendsData] = await Promise.all([
+      searchRedditShared(redditQueries, redditKeywords, 25, subreddits).then(posts => {
+        console.log(`   ✓ Reddit (OAuth/PullPush): ${posts.length} posts`);
         return posts;
       }),
       searchAppStore(opportunity).then(apps => {
@@ -892,12 +875,49 @@ serve(async (req: Request) => {
       }),
     ]);
 
+    // Map RedditPost (from shared module) to the simple format used by synthesis
+    const redditPosts = rawRedditPosts.map(p => ({
+      title: p.title,
+      subreddit: p.subreddit,
+      score: p.score,
+      selftext: p.selftext,
+      permalink: p.permalink,
+      topComments: p.top_comments.map(c => c.body),
+    }));
+    console.log(`   📬 Reddit: ${redditPosts.length} relevant posts from OAuth/PullPush`);
+
     // Batch 2: OpenAI web searches (sequential to avoid 429 rate limits)
-    // Only 3 web search calls — combined community+Twitter, competitor, analogous
     console.log('\n📡 Step 2b: Running OpenAI web searches (sequential)...');
+    const problemShort = problemStatement.split('.')[0].slice(0, 80);
+
+    // Only run Reddit web search as fallback if OAuth/PullPush found very few posts
+    let redditWebSearch: WebSearchResult = { query: '', summary: '', citations: [] };
+    if (redditPosts.length < 5) {
+      console.log(`   📌 Reddit API found only ${redditPosts.length} posts — supplementing with web search...`);
+      const rq = `Search Reddit for posts about: ${redditQueries[0] || title}. Find Reddit threads where people discuss ${problemShort}. Only return Reddit.com URLs.`;
+      redditWebSearch = await webSearch(rq, apiKey);
+      // Extract any Reddit URLs from web search into redditPosts
+      const seenUrls = new Set(redditPosts.map(p => p.permalink));
+      for (const cite of redditWebSearch.citations) {
+        if (cite.url?.includes('reddit.com') && !seenUrls.has(cite.url)) {
+          seenUrls.add(cite.url);
+          const subMatch = cite.url.match(/reddit\.com\/r\/([^\/]+)/);
+          redditPosts.push({
+            title: cite.title || '',
+            subreddit: subMatch?.[1] || 'unknown',
+            score: 10,
+            selftext: cite.snippet || '',
+            permalink: cite.url,
+            topComments: [],
+          });
+        }
+      }
+      console.log(`   ✓ Reddit web search fallback: ${redditWebSearch.citations.length} citations, now ${redditPosts.length} total posts`);
+      await new Promise(r => setTimeout(r, 1500));
+    }
 
     const communityEvidence = await webSearch(
-      `Find community discussions, Reddit posts, Quora answers, Twitter/X posts, and forum threads about problems faced by ${targetMarket}. Specifically about "${problemStatement}". Find real user complaints, frustrations, and requests for solutions.`,
+      `${targetMarket} "${problemShort}" community discussions complaints frustrations forum Quora`,
       apiKey
     );
     console.log(`   ✓ Community + social web search: ${communityEvidence.citations.length} citations`);
@@ -905,7 +925,7 @@ serve(async (req: Request) => {
     await new Promise(r => setTimeout(r, 1500));
 
     const competitorEvidence = await webSearch(
-      `What existing apps, platforms, and services exist for "${title}"? Find competitor apps on App Store and Google Play, their user reviews, ratings, and what users complain about.`,
+      `${title} app review complaints alternatives "${targetMarket}"`,
       apiKey
     );
     console.log(`   ✓ Competitor web search: ${competitorEvidence.citations.length} citations`);
@@ -917,7 +937,7 @@ serve(async (req: Request) => {
 
     const analogousMarketsEvidence = plan.analogousMarkets.length > 0
       ? await webSearch(
-          `Research how analogous communities solved similar problems: ${plan.analogousMarkets.join(', ')}. What networking platforms did they build? What worked? What was the demand like? What can we learn for "${title}"?`,
+          `${plan.analogousMarkets.join(', ')} community platform solutions demand "${title}"`,
           apiKey
         ).then(r => { console.log(`   ✓ Analogous markets: ${r.citations.length} citations (${plan.analogousMarkets.join(', ')})`); return r; })
       : { query: '', summary: '', citations: [] } as WebSearchResult;
@@ -926,7 +946,7 @@ serve(async (req: Request) => {
     console.log('\n🧠 Step 3: AI synthesis — acting as startup researcher...');
     const report = await synthesizeResearch(
       opportunity,
-      { redditPosts, communityEvidence, competitorApps, competitorEvidence, twitterEvidence, analogousMarkets: analogousMarketsEvidence, hackerNewsPosts, quoraForumResults, googleTrends: googleTrendsData, plan },
+      { redditPosts, redditWebSearch, communityEvidence, competitorApps, competitorEvidence, twitterEvidence, analogousMarkets: analogousMarketsEvidence, hackerNewsPosts, quoraForumResults, googleTrends: googleTrendsData, plan },
       apiKey
     );
 
@@ -951,7 +971,7 @@ serve(async (req: Request) => {
         },
       },
       sources: {
-        reddit: { postsFound: redditPosts.length, topPosts: redditPosts.slice(0, 5).map(p => ({ title: p.title, subreddit: p.subreddit, score: p.score, permalink: p.permalink })) },
+        reddit: { postsFound: redditPosts.length, webSearchCitations: redditWebSearch.citations.length, topPosts: redditPosts.slice(0, 8).map(p => ({ title: p.title, subreddit: p.subreddit, score: p.score, permalink: p.permalink })) },
         webSearch: { communityResults: communityEvidence.citations.length, competitorResults: competitorEvidence.citations.length, twitterResults: twitterEvidence.citations.length },
         appStore: { appsFound: competitorApps.length },
         analogousMarkets: { results: analogousMarketsEvidence.citations.length, markets: plan.analogousMarkets },
@@ -1061,7 +1081,7 @@ serve(async (req: Request) => {
       googleTrends: googleTrendsData,
       hackerNewsPosts: hackerNewsPosts.slice(0, 5),
       quoraForumResults: quoraForumResults.slice(0, 5),
-      webCitations: [...communityEvidence.citations, ...competitorEvidence.citations, ...analogousMarketsEvidence.citations]
+      webCitations: [...redditWebSearch.citations, ...communityEvidence.citations, ...competitorEvidence.citations, ...analogousMarketsEvidence.citations]
         .map(c => {
           let url = c.url || '';
           try { const u = new URL(url); u.searchParams.delete('utm_source'); u.searchParams.delete('utm_medium'); u.searchParams.delete('utm_campaign'); url = u.toString(); } catch {}

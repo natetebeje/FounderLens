@@ -29,3 +29,33 @@ verify_jwt = false
 
 [functions.validate-opportunity-research]
 verify_jwt = false
+
+[functions.opportunity-chat]
+verify_jwt = false
+
+[functions.launch-to-paperclip]
+verify_jwt = false
+
+[functions.delete-paperclip-company]
+verify_jwt = false
+
+[functions.paperclip-agent-ceo]
+verify_jwt = false
+
+[functions.paperclip-agent-cto]
+verify_jwt = false
+
+[functions.paperclip-agent-engineer]
+verify_jwt = false
+
+[functions.paperclip-agent-cmo]
+verify_jwt = false
+
+[functions.paperclip-agent-growth]
+verify_jwt = false
+
+[functions.paperclip-agent-branding]
+verify_jwt = false
+
+[functions.paperclip-agent-tick]
+verify_jwt = false

@@ -33,6 +33,75 @@ interface ResearchContext {
 }
 
 // ============================================================================
+// PROPOSAL JSON EXTRACTOR
+// Resilient to truncation, alternate fence tags, CRLF, and trailing commas.
+// Kept in sync with the client-side helper in ProductProposalGenerator.tsx.
+// ============================================================================
+
+function extractProposalJson(raw: string): any | null {
+  if (!raw) return null;
+  const content = raw.replace(/\r\n/g, '\n');
+
+  const labeled =
+    content.match(/```proposal-json\s*\n([\s\S]*?)```/) ||
+    content.match(/```proposal-json\s*\n([\s\S]*)$/);
+  if (labeled) {
+    const parsed = safeParseJson(labeled[1]);
+    if (parsed) return parsed;
+  }
+
+  const generic =
+    content.match(/```json\s*\n([\s\S]*?)```/) ||
+    content.match(/```json\s*\n([\s\S]*)$/) ||
+    content.match(/```\s*\n([\s\S]*?)```/);
+  if (generic) {
+    const parsed = safeParseJson(generic[1]);
+    if (parsed) return parsed;
+  }
+
+  const first = content.indexOf('{');
+  if (first !== -1) {
+    const candidate = sliceBalancedJson(content, first);
+    if (candidate) {
+      const parsed = safeParseJson(candidate);
+      if (parsed) return parsed;
+    }
+  }
+
+  return null;
+}
+
+function safeParseJson(text: string): any | null {
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch { /* try forgiving pass */ }
+  const relaxed = trimmed.replace(/,(\s*[}\]])/g, '$1');
+  try {
+    return JSON.parse(relaxed);
+  } catch { return null; }
+}
+
+function sliceBalancedJson(content: string, start: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < content.length; i++) {
+    const ch = content[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return content.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+// ============================================================================
 // SYSTEM PROMPT BUILDER
 // Constructs a rich, context-aware prompt from the validation research report.
 // The AI already knows everything about this opportunity — no re-explaining needed.
@@ -109,12 +178,23 @@ ${analogousList || '  - Not yet researched'}
 
 **Length:** Keep responses focused. 3-5 sentences max for questions. Longer only when synthesizing or generating the proposal.${proposalReadiness}
 
+## FOLLOW-UP SUGGESTIONS
+
+After EVERY chat response (but NOT when you are returning a proposal-json block), append a block of exactly this form at the very end of your message:
+
+<followups>
+- suggestion 1
+- suggestion 2
+- suggestion 3
+</followups>
+
+Each suggestion is a short next question the founder might naturally ask you, written in first person from the founder's perspective (e.g. "What should my pricing model be?"). Keep each one to 8 words or fewer. Tailor them to what was just discussed so they feel like the natural next step in the conversation. Do NOT include this block when you are returning a proposal-json block.
+
 ## GENERATING THE PRODUCT PROPOSAL
 
-When the user asks to generate the proposal (or you determine they're ready), respond with a complete JSON block inside a markdown code fence tagged \`\`\`proposal-json. Include ALL fields — do not skip any. Use everything you've learned from the conversation PLUS the research data above.
+When the user asks to generate the proposal (or you determine they're ready), respond with a **single valid JSON object and nothing else** — no markdown, no prose, no code fences, no commentary before or after. Include ALL fields — do not skip any. Use everything you've learned from the conversation PLUS the research data above.
 
 The JSON must follow this exact structure:
-\`\`\`proposal-json
 {
   "productName": "string",
   "oneLiner": "one sentence that explains the product and who it's for",
@@ -159,11 +239,9 @@ The JSON must follow this exact structure:
     "dataPoints": 0,
     "verdict": "string",
     "keyEvidence": ["evidence 1 from research", "evidence 2"]
-  }
-}
-\`\`\`
-
-After the JSON block, write a 2-3 sentence summary of what makes this proposal strong and what the founder should focus on first.`;
+  },
+  "summary": "2-3 sentence summary of what makes this proposal strong and where the founder should focus first"
+}`;
 }
 
 // ============================================================================
@@ -172,6 +250,8 @@ After the JSON block, write a 2-3 sentence summary of what makes this proposal s
 
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+
+  console.log('[opportunity-chat] build:', 'json-mode-v1');
 
   try {
     const {
@@ -295,8 +375,11 @@ serve(async (req: Request) => {
       body: JSON.stringify({
         model: 'gpt-4o',
         temperature: 0.7,
-        max_tokens: mode === 'generate_proposal' ? 3000 : 600,
+        max_tokens: mode === 'generate_proposal' ? 8000 : 600,
         stream: true,
+        ...(mode === 'generate_proposal'
+          ? { response_format: { type: 'json_object' } }
+          : {}),
         messages: messages.map(m => ({ role: m.role, content: m.content })),
       }),
     });
@@ -311,65 +394,96 @@ serve(async (req: Request) => {
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
 
+    const finalize = async () => {
+      if (!fullAssistantResponse) return;
+
+      await serviceSupabase.from('opportunity_chat_messages').insert({
+        chat_id: chat!.id,
+        role: 'assistant',
+        content: fullAssistantResponse,
+      });
+
+      if (mode === 'generate_proposal') {
+        // JSON mode: the whole response IS the JSON.
+        try {
+          const proposalJson = JSON.parse(fullAssistantResponse);
+          await serviceSupabase
+            .from('validation_workflows')
+            .update({ product_proposal: proposalJson, updated_at: new Date().toISOString() })
+            .eq('opportunity_id', opportunityId);
+        } catch (e) {
+          console.error('[opportunity-chat] generate_proposal JSON.parse failed:',
+            (e as Error).message, 'Length:', fullAssistantResponse.length);
+        }
+      } else if (fullAssistantResponse.includes('```proposal-json')) {
+        // Legacy path: the user asked for a proposal inside normal chat mode.
+        const proposalJson = extractProposalJson(fullAssistantResponse);
+        if (proposalJson) {
+          await serviceSupabase
+            .from('validation_workflows')
+            .update({ product_proposal: proposalJson, updated_at: new Date().toISOString() })
+            .eq('opportunity_id', opportunityId);
+        } else {
+          console.error('[opportunity-chat] Legacy proposal extraction failed. Length:', fullAssistantResponse.length);
+        }
+      }
+
+      await serviceSupabase
+        .from('opportunity_chats')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', chat!.id);
+    };
+
     const stream = new ReadableStream({
       async start(controller) {
         const reader = openaiResponse.body!.getReader();
+        let sseBuffer = '';
+        let finished = false;
+
+        const handleLine = (rawLine: string): 'done' | 'continue' => {
+          const line = rawLine.trim();
+          if (!line || !line.startsWith('data: ')) return 'continue';
+          const data = line.slice(6);
+          if (data === '[DONE]') return 'done';
+          try {
+            const parsed = JSON.parse(data);
+            const token = parsed.choices?.[0]?.delta?.content || '';
+            if (token) {
+              fullAssistantResponse += token;
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token })}\n\n`));
+            }
+          } catch { /* skip malformed frame */ }
+          return 'continue';
+        };
+
         try {
-          while (true) {
+          outer: while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n').filter(l => l.trim());
+            sseBuffer += decoder.decode(value, { stream: true });
+            // Buffer trailing partial line across reads — OpenAI's SSE frames
+            // routinely split across chunk boundaries, and naively splitting
+            // on '\n' drops the partial token on the floor.
+            const lines = sseBuffer.split('\n');
+            sseBuffer = lines.pop() ?? '';
 
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue;
-              const data = line.slice(6);
-              if (data === '[DONE]') {
-                // Save full assistant response to DB
-                if (fullAssistantResponse) {
-                  await serviceSupabase.from('opportunity_chat_messages').insert({
-                    chat_id: chat!.id,
-                    role: 'assistant',
-                    content: fullAssistantResponse,
-                  });
-
-                  // If this was a proposal generation, extract and save the JSON
-                  if (mode === 'generate_proposal' || fullAssistantResponse.includes('```proposal-json')) {
-                    const proposalMatch = fullAssistantResponse.match(/```proposal-json\n([\s\S]*?)```/);
-                    if (proposalMatch) {
-                      try {
-                        const proposalJson = JSON.parse(proposalMatch[1]);
-                        await serviceSupabase
-                          .from('validation_workflows')
-                          .update({ product_proposal: proposalJson, updated_at: new Date().toISOString() })
-                          .eq('opportunity_id', opportunityId);
-                      } catch { /* JSON parse failed — ignore */ }
-                    }
-                  }
-
-                  // Update chat updated_at
-                  await serviceSupabase
-                    .from('opportunity_chats')
-                    .update({ updated_at: new Date().toISOString() })
-                    .eq('id', chat!.id);
-                }
-
-                controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-                controller.close();
-                return;
+            for (const rawLine of lines) {
+              if (handleLine(rawLine) === 'done') {
+                finished = true;
+                break outer;
               }
-
-              try {
-                const parsed = JSON.parse(data);
-                const token = parsed.choices?.[0]?.delta?.content || '';
-                if (token) {
-                  fullAssistantResponse += token;
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({ token })}\n\n`));
-                }
-              } catch { /* skip malformed chunks */ }
             }
           }
+
+          // Flush any trailing buffered line.
+          if (!finished && sseBuffer) {
+            if (handleLine(sseBuffer) === 'done') finished = true;
+          }
+
+          await finalize();
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
         } catch (err) {
           controller.error(err);
         }

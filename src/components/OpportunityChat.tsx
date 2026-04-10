@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Building2, ExternalLink } from 'lucide-react';
 import { SkillsPicker } from './SkillsPicker';
-import { Send, Sparkles, Loader2, FileText, Bot, User, Download } from 'lucide-react';
+import { Send, Sparkles, Loader2, FileText, Bot, User, Download, RefreshCw, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
+import { downloadProposalPdf } from '@/lib/proposal-pdf';
+import { ProductProposalGenerator } from './ProductProposalGenerator';
 
 // ============================================================================
 // TYPES
@@ -15,6 +18,18 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   createdAt?: string;
+  attachment?: { kind: 'proposal'; proposal: any };
+}
+
+const PROPOSAL_ATTACHMENT_ID = 'proposal-attachment';
+
+function proposalAttachmentMessage(proposal: any): Message {
+  return {
+    id: PROPOSAL_ATTACHMENT_ID,
+    role: 'assistant',
+    content: '',
+    attachment: { kind: 'proposal', proposal },
+  };
 }
 
 interface OpportunityChatProps {
@@ -39,100 +54,29 @@ function extractProposalJson(content: string): object | null {
   try { return JSON.parse(match[1]); } catch { return null; }
 }
 
+function extractFollowups(content: string): string[] {
+  const match = content.match(/<followups>([\s\S]*?)<\/followups>/);
+  if (!match) return [];
+  return match[1]
+    .split('\n')
+    .map(s => s.replace(/^[-*•]\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
 function renderMessageContent(content: string): string {
-  // Strip the raw JSON block from displayed messages — it will be shown in the modal
-  return content.replace(/```proposal-json[\s\S]*?```/g, '').trim();
+  // Strip the raw JSON and the followups tags — displayed separately.
+  return content
+    .replace(/```proposal-json[\s\S]*?```/g, '')
+    .replace(/<followups>[\s\S]*?<\/followups>/g, '')
+    .trim();
 }
 
-function generateProposalPdf(proposal: any, title: string) {
-  const p = proposal;
-  const esc = (s: string) => s?.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') ?? '';
-  const list = (items: string[] | undefined, marker = '•') =>
-    items?.map(i => `<li>${marker} ${esc(i)}</li>`).join('') ?? '';
-
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>${esc(p.productName || title)} — Product Proposal</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1a1a2e; padding: 48px; line-height: 1.6; max-width: 800px; margin: 0 auto; }
-  h1 { font-size: 28px; margin-bottom: 4px; color: #1a1a2e; }
-  .oneliner { font-size: 15px; color: #555; margin-bottom: 6px; }
-  .tagline { font-size: 16px; color: #444; font-style: italic; margin-bottom: 24px; }
-  .score-badge { display: inline-block; padding: 3px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 20px; }
-  .score-high { background: #d1fae5; color: #065f46; }
-  .score-mid { background: #fef3c7; color: #92400e; }
-  .score-low { background: #fee2e2; color: #991b1b; }
-  h2 { font-size: 18px; color: #312e81; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #e0e7ff; }
-  h3 { font-size: 14px; color: #6366f1; text-transform: uppercase; letter-spacing: 0.5px; margin: 14px 0 6px; }
-  p { margin-bottom: 8px; font-size: 14px; }
-  ul, ol { margin: 6px 0 12px 20px; font-size: 14px; }
-  li { margin-bottom: 4px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 8px 0 16px; }
-  .grid-box { background: #f5f3ff; border-radius: 8px; padding: 12px; }
-  .grid-box .label { font-size: 11px; color: #6b7280; text-transform: uppercase; }
-  .grid-box .value { font-size: 15px; font-weight: 600; color: #1e1b4b; }
-  .highlight { background: #eef2ff; border-left: 3px solid #6366f1; padding: 10px 14px; border-radius: 4px; margin: 8px 0; font-size: 14px; }
-  .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #9ca3af; }
-  @media print { body { padding: 24px; } }
-</style></head><body>
-<h1>${esc(p.productName || title)}</h1>
-${p.oneLiner ? `<p class="oneliner">${esc(p.oneLiner)}</p>` : ''}
-${p.tagline ? `<p class="tagline">"${esc(p.tagline)}"</p>` : ''}
-${p.researchBacking?.opportunityScore ? `<span class="score-badge ${p.researchBacking.opportunityScore >= 70 ? 'score-high' : p.researchBacking.opportunityScore >= 45 ? 'score-mid' : 'score-low'}">${p.researchBacking.opportunityScore}/100 Opportunity Score</span>` : ''}
-
-${p.problemStatement ? `<h2>Problem Statement</h2><p>${esc(p.problemStatement)}</p>` : ''}
-
-${p.targetUser ? `<h2>Target User</h2>
-${p.targetUser.persona ? `<p><strong>Persona:</strong> ${esc(p.targetUser.persona)}</p>` : ''}
-${p.targetUser.painPoints?.length ? `<h3>Pain Points</h3><ul>${list(p.targetUser.painPoints)}</ul>` : ''}
-${p.targetUser.jobsToBeDone?.length ? `<h3>Jobs to Be Done</h3><ul>${list(p.targetUser.jobsToBeDone)}</ul>` : ''}
-${p.targetUser.currentAlternatives?.length ? `<h3>Current Alternatives</h3><ul>${list(p.targetUser.currentAlternatives)}</ul>` : ''}` : ''}
-
-${p.marketOpportunity ? `<h2>Market Opportunity</h2>
-<div class="grid">
-${p.marketOpportunity.targetMarketSize ? `<div class="grid-box"><div class="label">Total Market (TAM)</div><div class="value">${esc(p.marketOpportunity.targetMarketSize)}</div></div>` : ''}
-${p.marketOpportunity.serviceableMarket ? `<div class="grid-box"><div class="label">Serviceable Market (SAM)</div><div class="value">${esc(p.marketOpportunity.serviceableMarket)}</div></div>` : ''}
-</div>
-${p.marketOpportunity.competitorGaps?.length ? `<h3>Competitor Gaps</h3><ul>${list(p.marketOpportunity.competitorGaps, '▲')}</ul>` : ''}` : ''}
-
-${p.solution ? `<h2>Solution</h2>
-${p.solution.uniqueDifferentiator ? `<div class="highlight"><strong>Differentiator:</strong> ${esc(p.solution.uniqueDifferentiator)}</div>` : ''}
-${p.solution.unfairAdvantage ? `<div class="highlight"><strong>Unfair Advantage:</strong> ${esc(p.solution.unfairAdvantage)}</div>` : ''}
-${p.solution.coreFeatures?.length ? `<h3>Core Features</h3><ol>${p.solution.coreFeatures.map((f: string) => `<li>${esc(f)}</li>`).join('')}</ol>` : ''}` : ''}
-
-${p.mvpScope ? `<h2>MVP Scope</h2>
-${p.mvpScope.mustHave?.length ? `<h3>Must Have (v1)</h3><ul>${list(p.mvpScope.mustHave, '✓')}</ul>` : ''}
-${p.mvpScope.niceToHave?.length ? `<h3>Nice to Have (v2)</h3><ul>${list(p.mvpScope.niceToHave, '○')}</ul>` : ''}
-${p.mvpScope.outOfScope?.length ? `<h3>Out of Scope</h3><ul>${list(p.mvpScope.outOfScope, '✗')}</ul>` : ''}` : ''}
-
-${p.monetization ? `<h2>Monetization</h2>
-${p.monetization.model ? `<p><strong>Model:</strong> ${esc(p.monetization.model)}</p>` : ''}
-${p.monetization.pricing ? `<p><strong>Pricing:</strong> ${esc(p.monetization.pricing)}</p>` : ''}
-${p.monetization.rationale ? `<p>${esc(p.monetization.rationale)}</p>` : ''}` : ''}
-
-${p.goToMarket ? `<h2>Go-to-Market</h2>
-${p.goToMarket.primaryChannel ? `<div class="highlight"><strong>Primary Channel:</strong> ${esc(p.goToMarket.primaryChannel)}</div>` : ''}
-${p.goToMarket.launchStrategy ? `<p>${esc(p.goToMarket.launchStrategy)}</p>` : ''}
-${p.goToMarket.first30Days ? `<h3>First 30 Days</h3><p>${esc(p.goToMarket.first30Days)}</p>` : ''}` : ''}
-
-${p.risks?.length ? `<h2>Key Risks</h2><ul>${list(p.risks, '⚠')}</ul>` : ''}
-
-${p.nextSteps?.length ? `<h2>Next Steps</h2><ol>${p.nextSteps.map((s: string) => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}
-
-<div class="footer">
-  Generated by FounderLens Idea Coach
-  ${p.researchBacking ? ` · Score: ${p.researchBacking.opportunityScore || 'N/A'}/100 · ${p.researchBacking.dataPoints || 0} data points` : ''}
-</div>
-</body></html>`;
-
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) return;
-  printWindow.document.write(html);
-  printWindow.document.close();
-  printWindow.onload = () => {
-    printWindow.print();
-  };
-}
+const STARTER_QUESTIONS = [
+  'Who is the most specific target user?',
+  "What's the smallest version someone would pay for?",
+  "What's my unfair advantage?",
+];
 
 // ============================================================================
 // STREAMING HOOK
@@ -178,16 +122,21 @@ function useStreamingChat(opportunityId: string) {
 
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
+      let sseBuffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n').filter(l => l.trim());
+        sseBuffer += decoder.decode(value, { stream: true });
+        // SSE frames can span chunk boundaries — buffer any trailing partial
+        // line across reads so we never drop characters from a split token.
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop() ?? '';
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line || !line.startsWith('data: ')) continue;
           const data = line.slice(6);
           if (data === '[DONE]') {
             onDone(fullText);
@@ -199,7 +148,21 @@ function useStreamingChat(opportunityId: string) {
               fullText += parsed.token;
               onToken(parsed.token);
             }
-          } catch { /* skip */ }
+          } catch { /* skip malformed frame */ }
+        }
+      }
+
+      // Flush trailing buffered frame if the stream ended without a newline.
+      if (sseBuffer.trim().startsWith('data: ')) {
+        const data = sseBuffer.trim().slice(6);
+        if (data !== '[DONE]') {
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.token) {
+              fullText += parsed.token;
+              onToken(parsed.token);
+            }
+          } catch { /* ignore */ }
         }
       }
 
@@ -219,6 +182,7 @@ function useStreamingChat(opportunityId: string) {
 // ============================================================================
 
 export function OpportunityChat({ opportunityId, opportunityTitle, researchData }: OpportunityChatProps) {
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -226,16 +190,17 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
   const [proposal, setProposal] = useState<object | null>(null);
   const [paperclipCompanyId, setPaperclipCompanyId] = useState<string | undefined>();
   const [paperclipCompanyUrl, setPaperclipCompanyUrl] = useState<string | undefined>();
-  const [launching, setLaunching] = useState(false);
-  const [launchError, setLaunchError] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [hasLoadedHistory, setHasLoadedHistory] = useState(false);
+  const [showProposalGen, setShowProposalGen] = useState(false);
+  const [proposalGenMode, setProposalGenMode] = useState<'generate' | 'view'>('generate');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { isStreaming, sendMessage } = useStreamingChat(opportunityId);
 
   const userMessageCount = messages.filter(m => m.role === 'user').length;
-  const showProposalButton = userMessageCount >= 3 || !!proposal;
+  // Proposal generation is always available now — no message-count gate.
+  const showProposalButton = true;
 
   // Load history from DB on panel open
   useEffect(() => {
@@ -302,6 +267,10 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
 
         if (workflow?.product_proposal && Object.keys(workflow.product_proposal).length > 0) {
           setProposal(workflow.product_proposal);
+          setMessages(prev => {
+            const without = prev.filter(m => m.id !== PROPOSAL_ATTACHMENT_ID);
+            return [...without, proposalAttachmentMessage(workflow.product_proposal)];
+          });
         }
         if (workflow?.paperclip_company_id) {
           setPaperclipCompanyId(workflow.paperclip_company_id);
@@ -324,22 +293,19 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingContent]);
 
-  const handleSend = useCallback(async (mode: 'chat' | 'generate_proposal' = 'chat') => {
-    const text = mode === 'generate_proposal' ? '' : input.trim();
-    if (mode === 'chat' && !text) return;
-    if (isStreaming) return;
+  const handleSend = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
+    if (!text || isStreaming) return;
 
     setInput('');
     setStreamingContent('');
 
     // Optimistically add user message to UI
-    if (mode === 'chat') {
-      setMessages(prev => [...prev, {
-        id: `user-${Date.now()}`,
-        role: 'user',
-        content: text,
-      }]);
-    }
+    setMessages(prev => [...prev, {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: text,
+    }]);
 
     // Add streaming placeholder
     const streamingId = `streaming-${Date.now()}`;
@@ -347,20 +313,13 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
 
     await sendMessage(
       text,
-      mode,
+      'chat',
       (token) => setStreamingContent(prev => prev + token),
       (fullText) => {
         setMessages(prev => prev.map(m =>
           m.id === streamingId ? { ...m, id: `msg-${Date.now()}`, content: fullText } : m
         ));
         setStreamingContent('');
-
-        // Extract proposal if present
-        const extracted = extractProposalJson(fullText);
-        if (extracted) {
-          setProposal(extracted);
-          generateProposalPdf(extracted, opportunityTitle);
-        }
       },
       (err) => {
         setMessages(prev => prev.map(m =>
@@ -373,10 +332,23 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
     );
   }, [input, isStreaming, sendMessage]);
 
+  const handleProposalGenerated = useCallback((newProposal: any) => {
+    setProposal(newProposal);
+    setMessages(prev => {
+      const without = prev.filter(m => m.id !== PROPOSAL_ATTACHMENT_ID);
+      return [...without, proposalAttachmentMessage(newProposal)];
+    });
+  }, []);
+
+  const openGenerator = (mode: 'generate' | 'view') => {
+    setProposalGenMode(mode);
+    setShowProposalGen(true);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend('chat');
+      handleSend();
     }
   };
 
@@ -402,7 +374,7 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
           </div>
           {proposal && (
             <button
-              onClick={() => generateProposalPdf(proposal, opportunityTitle)}
+              onClick={() => downloadProposalPdf(proposal, opportunityTitle)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-200 dark:hover:bg-indigo-500/30 transition-colors"
             >
               <Download className="w-3 h-3" />
@@ -419,15 +391,63 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
             </div>
           ) : (
             <>
-              {messages.map((msg) => (
-                <MessageBubble
-                  key={msg.id}
-                  role={msg.role}
-                  content={msg.id.startsWith('streaming-') ? streamingContent : msg.content}
-                  isStreaming={msg.id.startsWith('streaming-') && isStreaming}
-                  onDownloadPdf={proposal ? () => generateProposalPdf(proposal, opportunityTitle) : undefined}
-                />
-              ))}
+              {messages.map((msg, idx) => {
+                if (msg.attachment?.kind === 'proposal') {
+                  return (
+                    <ProposalAttachmentBubble
+                      key={msg.id}
+                      proposal={msg.attachment.proposal}
+                      opportunityTitle={opportunityTitle}
+                      onView={() => openGenerator('view')}
+                      onRegenerate={() => openGenerator('generate')}
+                    />
+                  );
+                }
+                const isLast = idx === messages.length - 1;
+                const isStreamingMsg = msg.id.startsWith('streaming-');
+                const displayContent = isStreamingMsg ? streamingContent : msg.content;
+                const followups =
+                  isLast && msg.role === 'assistant' && !isStreamingMsg
+                    ? extractFollowups(msg.content)
+                    : [];
+                return (
+                  <div key={msg.id}>
+                    <MessageBubble
+                      role={msg.role}
+                      content={displayContent}
+                      isStreaming={isStreamingMsg && isStreaming}
+                    />
+                    {/* Follow-up chips under the latest assistant message */}
+                    {followups.length > 0 && !isStreaming && (
+                      <div className="mt-2 ml-9 flex flex-wrap gap-1.5">
+                        {followups.map((q, i) => (
+                          <button
+                            key={i}
+                            onClick={() => handleSend(q)}
+                            className="px-3 py-1.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors text-left"
+                          >
+                            {q}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {/* Starter chips — only when the welcome message is the sole message */}
+              {messages.length === 1 && !isStreaming && (
+                <div className="ml-9 flex flex-wrap gap-1.5 pt-1">
+                  {STARTER_QUESTIONS.map((q, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setInput(q)}
+                      className="px-3 py-1.5 rounded-full bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-colors text-left"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </>
           )}
@@ -446,7 +466,7 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
               disabled={isStreaming}
             />
             <Button
-              onClick={() => handleSend('chat')}
+              onClick={() => handleSend()}
               disabled={!input.trim() || isStreaming}
               size="icon"
               className="bg-indigo-600 hover:bg-indigo-500 text-white shrink-0"
@@ -461,15 +481,16 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
 
           {showProposalButton && (
             <div className="mt-2 space-y-2">
-              {/* Generate / Download Proposal */}
-              <button
-                onClick={() => proposal ? generateProposalPdf(proposal, opportunityTitle) : handleSend('generate_proposal')}
-                disabled={isStreaming || launching}
-                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-indigo-100 dark:bg-gradient-to-r dark:from-indigo-600/30 dark:to-purple-600/30 border border-indigo-300 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-200 dark:hover:from-indigo-600/40 dark:hover:to-purple-600/40 transition-all disabled:opacity-50"
-              >
-                {proposal ? <Download className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
-                {proposal ? 'Download Proposal PDF' : 'Generate Product Proposal'}
-              </button>
+              {!proposal && (
+                <button
+                  onClick={() => openGenerator('generate')}
+                  disabled={isStreaming}
+                  className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-indigo-100 dark:bg-gradient-to-r dark:from-indigo-600/30 dark:to-purple-600/30 border border-indigo-300 dark:border-indigo-500/30 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-200 dark:hover:from-indigo-600/40 dark:hover:to-purple-600/40 transition-all disabled:opacity-50"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  Generate Product Proposal
+                </button>
+              )}
 
               {/* Build This — only shows after proposal is generated */}
               {proposal && (
@@ -483,48 +504,15 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
                     Open AI Company Dashboard
                   </button>
                 ) : (
-                  // Not yet launched
+                  // Not yet launched — navigate to the pre-launch confirmation page
                   <button
-                    onClick={async () => {
-                      if (launching) return;
-                      setLaunching(true);
-                      setLaunchError(null);
-                      try {
-                        const { data: { session } } = await supabase.auth.getSession();
-                        const token = session?.access_token;
-                        const supabaseUrl = 'https://phppdhsozkpsquxlfezg.supabase.co';
-                        const res = await fetch(`${supabaseUrl}/functions/v1/launch-to-paperclip`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                          },
-                          body: JSON.stringify({ opportunityId }),
-                        });
-                        const data = await res.json();
-                        if (!res.ok || !data.success) throw new Error(data.error || 'Launch failed');
-                        setPaperclipCompanyId(data.companyId);
-                        setPaperclipCompanyUrl(data.companyUrl);
-                        window.open(data.companyUrl, '_blank');
-                      } catch (err: any) {
-                        setLaunchError(err.message || 'Launch failed. Please try again.');
-                      } finally {
-                        setLaunching(false);
-                      }
-                    }}
-                    disabled={launching || isStreaming}
+                    onClick={() => navigate(`/build?from=opportunity&id=${opportunityId}`)}
+                    disabled={isStreaming}
                     className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600/40 to-purple-600/40 border border-indigo-500/40 text-white text-xs font-semibold hover:from-indigo-600/60 hover:to-purple-600/60 transition-all disabled:opacity-60"
                   >
-                    {launching ? (
-                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Hiring your AI team...</>
-                    ) : (
-                      <><Building2 className="w-3.5 h-3.5" /> Build This</>  
-                    )}
+                    <Building2 className="w-3.5 h-3.5" /> Build This
                   </button>
                 )
-              )}
-              {launchError && (
-                <p className="text-xs text-red-400 text-center">{launchError}</p>
               )}
 
               {/* Skills Picker — shown after company is launched */}
@@ -542,6 +530,15 @@ export function OpportunityChat({ opportunityId, opportunityTitle, researchData 
         </div>
       </div>
 
+      {showProposalGen && (
+        <ProductProposalGenerator
+          opportunityId={opportunityId}
+          opportunityTitle={opportunityTitle}
+          existingProposal={proposalGenMode === 'view' ? proposal : null}
+          onGenerated={handleProposalGenerated}
+          onClose={() => setShowProposalGen(false)}
+        />
+      )}
     </>
   );
 }
@@ -554,15 +551,12 @@ function MessageBubble({
   role,
   content,
   isStreaming,
-  onDownloadPdf,
 }: {
   role: 'user' | 'assistant';
   content: string;
   isStreaming?: boolean;
-  onDownloadPdf?: () => void;
 }) {
   const displayContent = renderMessageContent(content);
-  const hasProposal = content.includes('```proposal-json');
 
   return (
     <div className={`flex gap-2.5 ${role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -597,15 +591,81 @@ function MessageBubble({
             <span className="inline-block w-0.5 h-4 bg-indigo-500 dark:bg-indigo-400 ml-0.5 animate-pulse align-middle" />
           )}
         </div>
-        {hasProposal && onDownloadPdf && (
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// PROPOSAL ATTACHMENT BUBBLE
+// ============================================================================
+
+function ProposalAttachmentBubble({
+  proposal,
+  opportunityTitle,
+  onView,
+  onRegenerate,
+}: {
+  proposal: any;
+  opportunityTitle: string;
+  onView: () => void;
+  onRegenerate: () => void;
+}) {
+  const productName = proposal?.productName || opportunityTitle;
+  const safeName = String(productName).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || 'proposal';
+  const fileName = `Product-Proposal-${safeName}.pdf`;
+
+  return (
+    <div className="flex gap-2.5 flex-row">
+      <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 bg-indigo-100 dark:bg-indigo-500/20">
+        <Bot className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+      </div>
+
+      <div className="max-w-[85%] flex flex-col gap-1">
+        <button
+          type="button"
+          onClick={onView}
+          className="group flex items-center gap-3 rounded-2xl rounded-tl-sm border border-indigo-200 dark:border-indigo-500/30 bg-muted hover:bg-indigo-50 dark:hover:bg-indigo-500/10 px-3 py-2.5 text-left transition-colors"
+        >
+          <div className="w-10 h-12 rounded-md bg-indigo-100 dark:bg-indigo-500/20 border border-indigo-200 dark:border-indigo-500/30 flex items-center justify-center shrink-0">
+            <FileText className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-foreground truncate">
+              {fileName}
+            </div>
+            <div className="text-[11px] text-muted-foreground truncate">
+              Product Proposal · Click to view
+            </div>
+          </div>
+        </button>
+
+        <div className="flex flex-wrap gap-1.5 pl-1">
           <button
-            onClick={onDownloadPdf}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-100 dark:bg-indigo-500/10 border border-indigo-200 dark:border-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-xs font-medium hover:bg-indigo-200 dark:hover:bg-indigo-500/20 transition-colors"
+            type="button"
+            onClick={onView}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-500/30 bg-background hover:bg-indigo-50 dark:hover:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 text-[11px] font-medium transition-colors"
           >
-            <Download className="w-3.5 h-3.5" />
-            Download Product Proposal PDF
+            <Eye className="w-3 h-3" />
+            View
           </button>
-        )}
+          <button
+            type="button"
+            onClick={() => downloadProposalPdf(proposal, opportunityTitle)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-500/30 bg-background hover:bg-indigo-50 dark:hover:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 text-[11px] font-medium transition-colors"
+          >
+            <Download className="w-3 h-3" />
+            Download PDF
+          </button>
+          <button
+            type="button"
+            onClick={onRegenerate}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-indigo-200 dark:border-indigo-500/30 bg-background hover:bg-indigo-50 dark:hover:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 text-[11px] font-medium transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Regenerate
+          </button>
+        </div>
       </div>
     </div>
   );

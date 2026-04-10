@@ -10,12 +10,25 @@ import { useNavigate } from 'react-router-dom';
 import {
   Building2, Rocket, ExternalLink, RefreshCw, Users, Target,
   CheckCircle2, Clock, AlertCircle, Zap, TrendingUp, Bot,
-  ChevronRight, Plus, Loader2, BarChart3, Package, Palette, Globe,
+  ChevronRight, Plus, Loader2, BarChart3, Package, Palette, Globe, Trash2, Play,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { supabase } from '@/integrations/supabase/client';
 import { useAICompanies, AICompany, PaperclipAgent } from '@/hooks/useAICompanies';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -178,12 +191,44 @@ function BrandingPanel({ brand }: { brand: NonNullable<AICompany['brandPackage']
 
 // ─── Company card ─────────────────────────────────────────────────────────────
 
-function CompanyCard({ company, navigate }: { company: AICompany; navigate: ReturnType<typeof useNavigate> }) {
+function CompanyCard({
+  company,
+  navigate,
+  onDelete,
+  onRunAgents,
+}: {
+  company: AICompany;
+  navigate: ReturnType<typeof useNavigate>;
+  onDelete: (company: AICompany) => void;
+  onRunAgents: (company: AICompany) => Promise<void>;
+}) {
   const totalIssues = company.openIssues.length + company.doneIssues.length;
   const spendPct = company.budgetCents > 0
     ? Math.min(100, Math.round((company.monthlySpendCents / company.budgetCents) * 100))
     : 0;
   const activeGoal = company.goals.find(g => g.status === 'active') || company.goals[0];
+  const [deleting, setDeleting] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [running, setRunning] = useState(false);
+
+  const handleDeleteConfirmed = async () => {
+    setDeleting(true);
+    try {
+      await onDelete(company);
+      setDialogOpen(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleRunAgents = async () => {
+    setRunning(true);
+    try {
+      await onRunAgents(company);
+    } finally {
+      setRunning(false);
+    }
+  };
 
   return (
     <Card className="overflow-hidden hover:shadow-md transition-shadow">
@@ -221,16 +266,73 @@ function CompanyCard({ company, navigate }: { company: AICompany; navigate: Retu
               <Zap className="w-3 h-3 mr-1" />
               Validate
             </Button>
-            <a
-              href={company.paperclipCompanyUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            {company.paperclipCompanyUrl && (
+              <a
+                href={company.paperclipCompanyUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1">
+                  <ExternalLink className="w-3 h-3" />
+                  Dashboard
+                </Button>
+              </a>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+              title="Run agents now"
+              disabled={running}
+              onClick={handleRunAgents}
             >
-              <Button size="sm" variant="outline" className="h-7 px-2 text-xs gap-1">
-                <ExternalLink className="w-3 h-3" />
-                Dashboard
-              </Button>
-            </a>
+              {running ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Play className="w-3.5 h-3.5" />
+              )}
+            </Button>
+            <AlertDialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600 dark:hover:text-red-400"
+                  title="Delete company"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete {company.productName}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will attempt to delete the company from Paperclip and will always
+                    reset the FounderLens linkage so this card disappears from the Build page.
+                    If Paperclip does not support server-side deletion, you may need to
+                    remove the company from the Paperclip dashboard manually. This action
+                    cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={deleting}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleDeleteConfirmed();
+                    }}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    {deleting ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Deleting…</>
+                    ) : (
+                      'Delete'
+                    )}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
 
@@ -376,8 +478,8 @@ function EmptyState({ navigate }: { navigate: ReturnType<typeof useNavigate> }) 
       </div>
       <h3 className="text-lg font-semibold text-foreground mb-1">No AI companies yet</h3>
       <p className="text-sm text-muted-foreground max-w-sm mb-6 leading-relaxed">
-        Validate an opportunity, chat with the Idea Coach to generate a Product Proposal,
-        then click <strong>Build This</strong> to launch your first AI company.
+        Validate an opportunity, then click <strong>Launch AI Company</strong> from the results page
+        to create your first AI company. Optionally, chat with the Idea Coach first for a richer proposal.
       </p>
       <Button onClick={() => navigate('/opportunities')} variant="outline" size="sm" className="gap-2">
         <Plus className="w-3.5 h-3.5" />
@@ -396,6 +498,89 @@ export function AICompaniesTab() {
   const totalAgents = companies.reduce((s, c) => s + c.agents.length, 0);
   const totalOpen   = companies.reduce((s, c) => s + c.openIssues.length, 0);
   const totalDone   = companies.reduce((s, c) => s + c.doneIssues.length, 0);
+
+  const handleDeleteCompany = async (company: AICompany) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const supabaseUrl = 'https://phppdhsozkpsquxlfezg.supabase.co';
+      const res = await fetch(`${supabaseUrl}/functions/v1/delete-paperclip-company`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ opportunityId: company.opportunityId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Delete failed');
+      }
+
+      if (data.deletedFromPaperclip) {
+        toast.success(`${company.productName} deleted`, {
+          description: data.note || 'Removed from Paperclip and FounderLens.',
+        });
+      } else {
+        toast.warning(`${company.productName} removed from FounderLens`, {
+          description: data.note || 'The card has been removed, but the Paperclip company may still exist — check the Paperclip dashboard.',
+          duration: 8000,
+        });
+      }
+
+      refresh();
+    } catch (err: any) {
+      toast.error('Delete failed', {
+        description: err.message || 'Unknown error. The company was not removed.',
+      });
+      throw err;
+    }
+  };
+
+  const handleRunAgents = async (company: AICompany) => {
+    const toastId = toast.loading(`Waking ${company.productName} agents...`);
+    try {
+      const supabaseUrl = 'https://phppdhsozkpsquxlfezg.supabase.co';
+      const res = await fetch(`${supabaseUrl}/functions/v1/paperclip-agent-tick`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'one',
+          companyId: company.paperclipCompanyId,
+          opportunityId: company.opportunityId,
+          wakeReason: 'manual-trigger',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Tick failed (${res.status})`);
+      }
+
+      const okCount = (data.agents || []).filter((a: any) => a.status === 'ok').length;
+      const errCount = (data.agents || []).filter((a: any) => a.status === 'error').length;
+
+      if (errCount === 0) {
+        toast.success(`${okCount} agents running`, {
+          id: toastId,
+          description: 'Check the Paperclip dashboard in ~60 seconds for new activity.',
+        });
+      } else {
+        toast.warning(`${okCount} running, ${errCount} failed`, {
+          id: toastId,
+          description: 'Some agents failed to wake. Check Supabase logs for details.',
+          duration: 8000,
+        });
+      }
+
+      // Give agents a moment to post their first actions, then refresh.
+      setTimeout(() => refresh(), 3000);
+    } catch (err: any) {
+      toast.error('Failed to wake agents', {
+        id: toastId,
+        description: err.message || 'Unknown error.',
+      });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -488,6 +673,8 @@ export function AICompaniesTab() {
               key={company.paperclipCompanyId}
               company={company}
               navigate={navigate}
+              onDelete={handleDeleteCompany}
+              onRunAgents={handleRunAgents}
             />
           ))}
         </div>

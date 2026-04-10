@@ -145,7 +145,7 @@ export function useAICompanies() {
           opportunityTitle: opp?.title || 'Untitled',
           targetMarket: opp?.target_market || '',
           paperclipCompanyId: row.paperclip_company_id,
-          paperclipCompanyUrl: row.paperclip_company_url || `${PAPERCLIP_URL}/dashboard`,
+          paperclipCompanyUrl: row.paperclip_company_url || '',
           launchedAt: row.paperclip_launched_at,
           opportunityScore: parseInt(research.opportunityScore) || 0,
           verdict: research.verdict || 'moderate',

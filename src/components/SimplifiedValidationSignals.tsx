@@ -6,13 +6,14 @@ import { Progress } from '@/components/ui/progress';
 import {
   Search, Rocket, ArrowRight, TrendingUp, Users, DollarSign,
   Cpu, Shield, BarChart3, Target, Brain, Copy, Play, RotateCcw,
-  Loader2, CheckCircle, Zap
+  Loader2, CheckCircle, Zap, ExternalLink, FileText, Building2
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { CommunityResearchResults } from './CommunityResearchResults';
 import { ResearchReport } from './ResearchReport';
 import { OpportunityChat } from './OpportunityChat';
+import { ProductProposalModal } from './ProductProposalModal';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 
@@ -100,6 +101,10 @@ export function SimplifiedValidationSignals({
   const [researchReportData, setResearchReportData] = useState<any>(null);
   const [aiData, setAiData] = useState<any>(null);
   const [recommendation, setRecommendation] = useState<string | null>(null);
+  const [productProposal, setProductProposal] = useState<any>(null);
+  const [paperclipCompanyId, setPaperclipCompanyId] = useState<string | null>(null);
+  const [paperclipCompanyUrl, setPaperclipCompanyUrl] = useState<string | null>(null);
+  const [showProposalModal, setShowProposalModal] = useState(false);
 
   React.useEffect(() => {
     if (initialResults && !results) setResults(initialResults);
@@ -129,7 +134,7 @@ export function SimplifiedValidationSignals({
       const [workflowRes, aiRes] = await Promise.all([
         supabase
           .from('validation_workflows')
-          .select('reddit_validation_results, automated_validation_results, automated_score, automated_recommendation, composite_score, status, last_signal_at')
+          .select('reddit_validation_results, automated_validation_results, automated_score, automated_recommendation, composite_score, status, last_signal_at, product_proposal, paperclip_company_id, paperclip_company_url')
           .eq('opportunity_id', opportunity.id)
           .single(),
         supabase
@@ -219,6 +224,14 @@ export function SimplifiedValidationSignals({
           status: workflowRes.data?.status || 'needs_validation',
           last_signal_at: workflowRes.data?.last_signal_at,
         });
+      }
+
+      // Load product proposal and Paperclip company state
+      const proposal = workflowRes.data?.product_proposal;
+      if (hasData(proposal)) setProductProposal(proposal);
+      if (workflowRes.data?.paperclip_company_id) {
+        setPaperclipCompanyId(workflowRes.data.paperclip_company_id);
+        setPaperclipCompanyUrl(workflowRes.data.paperclip_company_url || 'https://build.founderlens.io');
       }
     } catch (e) {
       // No persisted data
@@ -977,20 +990,45 @@ export function SimplifiedValidationSignals({
                   </div>
                 </div>
               </div>
-              {isModerate && (
-                <div className="flex gap-2 pt-1">
+              <div className="flex flex-wrap gap-2 pt-1">
+                {paperclipCompanyId ? (
+                  <>
+                    <Button size="sm" onClick={() => window.open(paperclipCompanyUrl || 'https://build.founderlens.io', '_blank')}>
+                      <ExternalLink className="h-4 w-4 mr-1" /> Open AI Company
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => navigate(`/build?from=opportunity&id=${opportunity.id}`)}>
+                      <Building2 className="h-4 w-4 mr-1" /> Monitor in Build Lab
+                    </Button>
+                  </>
+                ) : (
                   <Button size="sm" onClick={() => navigate(`/build?from=opportunity&id=${opportunity.id}`)}>
-                    Build <ArrowRight className="h-4 w-4 ml-1" />
+                    <Rocket className="h-4 w-4 mr-1" /> Build This
                   </Button>
-                  <Button size="sm" variant="outline" onClick={runAllSignals} disabled={isRunning}>
-                    <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Re-validate
+                )}
+                {productProposal && (
+                  <Button size="sm" variant="outline" onClick={() => setShowProposalModal(true)}>
+                    <FileText className="h-4 w-4 mr-1" /> View Proposal
                   </Button>
-                </div>
-              )}
+                )}
+                <Button size="sm" variant="outline" onClick={runAllSignals} disabled={isRunning}>
+                  <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Re-validate
+                </Button>
+              </div>
             </CardContent>
           </Card>
         );
       })()}
+
+      {showProposalModal && productProposal && (
+        <ProductProposalModal
+          proposal={productProposal}
+          opportunityTitle={opportunity.title}
+          opportunityId={opportunity.id}
+          onClose={() => setShowProposalModal(false)}
+          existingCompanyId={paperclipCompanyId || undefined}
+          existingCompanyUrl={paperclipCompanyUrl || undefined}
+        />
+      )}
       </div>{/* end left column */}
 
       {/* ── Idea Coach sticky sidebar ── */}
